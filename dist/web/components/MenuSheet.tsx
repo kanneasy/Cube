@@ -18,6 +18,7 @@ import {
 } from '../../store/records';
 import { PATTERNS } from '../../cube/patterns';
 import { PALETTES, type PaletteId } from '../cube/palette';
+import { Mark } from './Mark';
 
 interface Props {
   solves: StoredSolve[];
@@ -71,7 +72,10 @@ export function MenuSheet(props: Props) {
   return (
     <div className="sheet" role="dialog" aria-label="Menu">
       <div className="sheet__head">
-        <h2 className="sheet__title">RECORDS</h2>
+        <h2 className="sheet__title">
+          <Mark size={18} />
+          RECORDS
+        </h2>
         <button className="control" onClick={props.onClose}>
           CLOSE
         </button>
