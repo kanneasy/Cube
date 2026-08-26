@@ -336,6 +336,7 @@ export function App() {
       {menuOpen && (
         <MenuSheet
           solves={library.solves}
+          storageUnavailable={library.unavailable}
           today={today}
           paletteId={paletteId}
           soundOn={soundOn}

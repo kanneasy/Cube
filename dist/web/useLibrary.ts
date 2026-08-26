@@ -8,7 +8,13 @@ import { generateScramble } from '../solve/oracle';
 export interface Library {
   solves: StoredSolve[];
   ready: boolean;
-  /** Null until the first read finishes, so nothing renders an empty board too early. */
+  /**
+   * Set when the device's storage could not be opened at all -- a private window, or
+   * site data blocked. Distinct from having no solves yet, and it has to be, because
+   * showing "no solves yet" to someone whose history exists but cannot be read is a
+   * lie the app would keep telling on every launch.
+   */
+  unavailable: boolean;
   record: (solve: StoredSolve) => Promise<void>;
   todaysScramble: () => Promise<{ date: string; scramble: string }>;
   readSetting: <T>(key: string) => Promise<T | undefined>;
@@ -18,6 +24,7 @@ export interface Library {
 export function useLibrary(): Library {
   const [solves, setSolves] = useState<StoredSolve[]>([]);
   const [ready, setReady] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -29,8 +36,12 @@ export function useLibrary(): Library {
       })
       .catch(() => {
         // A device that will not open its database still plays; it just cannot
-        // remember. Failing to a working cube beats failing to a blank screen.
-        if (!cancelled) setReady(true);
+        // remember. Failing to a working cube beats failing to a blank screen -- but
+        // the app says which of the two it is rather than pretending the history is
+        // empty.
+        if (cancelled) return;
+        setUnavailable(true);
+        setReady(true);
       });
     return () => {
       cancelled = true;
@@ -57,6 +68,7 @@ export function useLibrary(): Library {
   return {
     solves,
     ready,
+    unavailable,
     record,
     todaysScramble,
     readSetting: getSetting,

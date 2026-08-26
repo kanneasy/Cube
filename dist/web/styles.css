@@ -746,3 +746,13 @@ button {
   display: flex;
   gap: var(--space-8);
 }
+
+.board__warning {
+  margin: 0;
+  padding: var(--space-12);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-control);
+  font-size: var(--type-size-small);
+  line-height: var(--type-leading-body);
+  color: var(--color-ink-80);
+}

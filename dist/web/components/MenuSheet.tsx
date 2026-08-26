@@ -22,6 +22,7 @@ import { Mark } from './Mark';
 
 interface Props {
   solves: StoredSolve[];
+  storageUnavailable: boolean;
   today: string;
   paletteId: PaletteId;
   soundOn: boolean;
@@ -82,6 +83,13 @@ export function MenuSheet(props: Props) {
       </div>
 
       <div className="sheet__body">
+        {props.storageUnavailable && (
+          <p className="board__warning">
+            This device is not letting the app store anything, so nothing here will be kept. A private window
+            usually causes it. The cube still works.
+          </p>
+        )}
+
         <Board
           title="BEST SINGLE"
           empty="No solves yet. Finish one and it lands here."
