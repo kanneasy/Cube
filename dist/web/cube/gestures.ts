@@ -26,8 +26,13 @@ const DEG = Math.PI / 180;
  */
 const TURN_GAIN = 1.06;
 const TANGENT_FLOOR = 0.62;
-/** Live rotation is clamped so a runaway drag cannot spin a layer indefinitely. */
-const LIVE_CLAMP = 180 * DEG;
+/**
+ * One quarter turn is the most a single drag can do, and the layer cannot be dragged
+ * past it. Design allowed 180deg of live travel; a fast swipe then carried the layer
+ * past 90 and committed two quarters at once, which is not what a hand on a cube
+ * expects -- you turn a face, you do not spin it.
+ */
+const LIVE_CLAMP = 90 * DEG;
 /** Travel before the rotation axis is resolved and then locked for the gesture. */
 const AXIS_LOCK_PX = 8;
 /** Release angular speed at or above which a flick fires in the direction of travel. */
@@ -492,16 +497,21 @@ export class CubeGestures {
     // A flick fires to the next quarter turn in the direction of travel even if the
     // layer has moved less than 45 degrees. That is what makes a flick feel like a
     // flick rather than like a command.
-    const target =
+    // A flick fires to the next quarter in the direction of travel even under 45deg;
+    // both branches are then held to a single quarter, so a hard swipe and a slow drag
+    // commit the same amount and only the feel differs.
+    const raw =
       Math.abs(drag.velocity) >= FLICK_RAD_PER_S
-        ? (drag.velocity > 0 ? Math.floor(drag.angle / quarter) + 1 : Math.ceil(drag.angle / quarter) - 1) * quarter
-        : Math.round(drag.angle / quarter) * quarter;
+        ? (drag.velocity > 0 ? Math.floor(drag.angle / quarter) + 1 : Math.ceil(drag.angle / quarter) - 1)
+        : Math.round(drag.angle / quarter);
+    const target = Math.max(-1, Math.min(1, raw)) * quarter;
 
     this.callbacks.onSnapStart(170);
 
     // The release velocity is carried into the spring as initial velocity.
     this.spring(drag.angle, target, drag.velocity, TURN_SPRING, (value) => this.renderer.setLayerRotation(drag.base, value), () => {
-      const quarters = Math.round(target / quarter);
+      // Never more than one quarter, whatever the flick did.
+      const quarters = Math.max(-1, Math.min(1, Math.round(target / quarter)));
       const amount = ((quarters % 4) + 4) % 4;
       this.renderer.setLayerRotation(null, 0);
       if (amount === 0) {

@@ -274,6 +274,7 @@ export function App() {
       zoom: () => rendererRef.current?.getZoom(),
       setZoom: (z: number) => rendererRef.current?.setZoom(z),
       orbitBy: (right: number, down: number) => rendererRef.current?.orbitBy(right, down),
+      pick: (x: number, y: number) => rendererRef.current?.pickSticker(x, y) ?? null,
       orientation: () => {
         const q = rendererRef.current?.orientationQuaternion();
         return q ? [q.x, q.y, q.z, q.w] : null;

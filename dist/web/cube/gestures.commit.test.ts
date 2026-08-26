@@ -243,3 +243,39 @@ describe('taps and the view reset', () => {
     expect(gestures.animating).toBe(false);
   });
 });
+
+describe('a drag never commits more than one quarter turn', () => {
+  // Reported from a real phone: a strong swipe committed two quarters at once. A hand
+  // on a cube turns a face; it does not spin it.
+  it('commits one quarter for a drag far past a quarter turn', () => {
+    const { clock, canvas, h } = setup();
+    drag(canvas, clock, 0, -400, { steps: 20 }); // many times the ~46px a quarter needs
+    expect(clock.flush()).toBe(true);
+    expect(h.commits).toHaveLength(1);
+    expect(h.commits[0].amount).not.toBe(2);
+    expect([1, 3]).toContain(h.commits[0].amount);
+  });
+
+  it('commits one quarter for a violent flick', () => {
+    const { clock, canvas, h } = setup();
+    drag(canvas, clock, 0, -300, { steps: 2, msPerStep: 4 }); // far past the flick threshold
+    expect(clock.flush()).toBe(true);
+    expect(h.commits).toHaveLength(1);
+    expect(h.commits[0].amount).not.toBe(2);
+  });
+
+  it('never lets the live layer travel past a quarter turn', () => {
+    const { clock, canvas, layerCalls } = setup();
+    drag(canvas, clock, 0, -400, { steps: 20 });
+    const live = layerCalls.filter((c) => c.base !== null).map((c) => Math.abs(c.angle));
+    expect(Math.max(...live)).toBeLessThanOrEqual(Math.PI / 2 + 1e-6);
+    clock.flush();
+  });
+
+  it('still commits nothing for a drag that stays under half a quarter', () => {
+    const { clock, canvas, h } = setup();
+    drag(canvas, clock, 0, -15, { steps: 6, msPerStep: 40 }); // small and slow
+    clock.flush();
+    expect(h.commits).toHaveLength(0);
+  });
+});

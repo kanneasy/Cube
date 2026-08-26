@@ -715,3 +715,22 @@ The hierarchy underneath is unchanged: the timer still goes from ink-56 idle to 
 white running, the qualifier still sits against the number it disqualifies, and every
 label still clears the 11px legibility floor and the 3:1 contrast floor. What changed is
 how much of the screen the chrome asks for, against a cube that is the actual subject.
+
+
+## Correction: the whole cube turns, and a drag turns it once
+
+Set 2026-08-26, from use on a real iPhone.
+
+**The turn region is the cube's silhouette, not its stickers.** Hit-testing only the
+sticker planes left roughly a sixth of the visible cube -- the black grid between them --
+falling through to the background, so a drag that plainly started ON the cube orbited it
+instead. Measured before the fix: 62% of the cube's bounding box hit a sticker; after,
+100% of the cube itself. The plastic is raycast alongside the stickers and reports the
+face it belongs to. Only true background orbits now, which is the rule a hand expects: if
+you can see cube under your thumb, your thumb turns cube.
+
+**A drag commits at most one quarter turn.** Live travel is clamped to 90 degrees rather
+than the 180 this spec allowed, and both the flick and settle branches are held to a
+single quarter. A hard swipe used to carry the layer past 90 and commit two at once. You
+turn a face; you do not spin it. A hard swipe and a slow drag now commit the same amount
+and only the feel between them differs.

@@ -382,23 +382,39 @@ export class CubeRenderer {
     return new THREE.Vector2(t.x, t.y);
   }
 
+  /**
+   * What the cube shows at a screen point -- which cubie, and which of its faces.
+   *
+   * The BODY is raycast alongside the stickers, and that is the whole point. A sticker
+   * covers 86% of its cell, so roughly a sixth of the cube's visible surface is the
+   * black grid between them; hit-testing stickers alone let a drag that plainly started
+   * ON the cube fall through to the background and orbit it. Measured at 62% of the
+   * cube's bounding box hitting a sticker. A thumb finds those lines constantly.
+   *
+   * Hits come back sorted by distance, so the nearest surface wins whether it is a
+   * sticker or the plastic beside it.
+   */
   pickSticker(clientX: number, clientY: number): { cubieIndex: number; worldNormal: Vec3 } | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
 
-    const meshes = this.cubies.flatMap((c) => c.stickers.map((s) => s.mesh));
-    const hits = this.raycaster.intersectObjects(meshes, false);
-    if (hits.length === 0) return null;
+    const meshes = this.cubies.flatMap((c) => [c.body, ...c.stickers.map((s) => s.mesh)]);
+    const hit = this.raycaster.intersectObjects(meshes, false)[0];
+    if (!hit) return null;
 
-    const mesh = hits[0].object as THREE.Mesh;
-    const cubieIndex = this.cubies.findIndex((c) => c.stickers.some((s) => s.mesh === mesh));
+    const mesh = hit.object as THREE.Mesh;
+    const cubieIndex = this.cubies.findIndex((c) => c.body === mesh || c.stickers.some((s) => s.mesh === mesh));
     if (cubieIndex < 0) return null;
-    const sticker = this.cubies[cubieIndex].stickers.find((s) => s.mesh === mesh)!;
-    // Deliberately the CUBE-space normal, not the world one: the move logic works in the
-    // cube's own frame, where the grid coordinates live.
-    const n = sticker.localNormal.clone().applyQuaternion(this.cubies[cubieIndex].group.quaternion).round();
+    const cubie = this.cubies[cubieIndex];
+
+    const sticker = cubie.stickers.find((s) => s.mesh === mesh);
+    // Both paths give a normal in the cubie's own frame; rotating by the cubie's
+    // quaternion lands in CUBE space, which is where the move logic's grid lives.
+    const local = sticker ? sticker.localNormal.clone() : (hit.face?.normal.clone() ?? null);
+    if (!local) return null;
+    const n = local.applyQuaternion(cubie.group.quaternion).round();
     return { cubieIndex, worldNormal: [n.x, n.y, n.z] };
   }
 
