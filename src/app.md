@@ -227,33 +227,52 @@ predicate over cube state, checked against a simulator the app already runs.
 
 Two things make them harder than they look, and both are handled rather than ignored.
 
-**Detection scans backward, not forward.** A stage's predicate can go true by accident in
-the middle of a solve, when a cross edge happens to land right while you are working on
-something else, and then be disturbed again. Flagging the first moment it was true would
-report the cross as finished far too early. The app finds the **last** move after which
-the predicate holds continuously through to the solved state. Undo makes this sharper
-still, since the move log itself is rewritten by backtracking.
+**Detection is a sequential forward scan.** Each stage completes at the first move at or
+after the previous stage completed, which makes the four boundaries monotone by
+construction.
+
+The obvious alternative, and the one this spec originally called for, was to scan
+backward for the last moment a predicate holds continuously through to the solved state,
+so that a stage going briefly true by coincidence could not be mistaken for the real
+thing. Building it proved that wrong. Every last-layer algorithm breaks the first two
+layers partway through and restores them, Sune opening the front-right slot on its very
+first move, so the final unbroken run of "first two layers complete" begins somewhere
+inside the last-layer algorithm on every real solve. A backward scan collapses three
+stages onto one index. The coincidence it was guarding against is real; the ordering
+check below is what catches it instead.
+
+Undo needs no special handling here: it rewrites the move log, and the scan reads the
+log, so a backtracked solve is scored on the path it actually ended up taking.
 
 **The cross face is inferred, not assumed.** Solvers who are color neutral pick whichever
 face gives the easiest cross for that scramble. Assuming white would misreport every
 solve by such a person.
 
 ~~~ stage-predicates
-Cross: for candidate face f, all four edges carrying f's color are in their home slot
-  and correctly oriented against their adjacent centers. Candidate = the face whose
-  cross completes and stays complete; ties resolve to the earliest.
-F2L: all 8 cubies of the two layers on the cross side are placed and oriented.
-OLL: the opposite face is monochrome, permutation irrelevant.
-PLL: the cube is solved.
-Scan: for each predicate, the last index i in the log such that it holds for all j >= i.
+A piece is correct when every sticker it shows matches the center of the face it shows
+on. Read against the CURRENT centers, not against home positions, which is how a person
+reads a cube and what keeps every predicate right after a slice move.
+
+Cross: the four edge slots on the cross face are correct.
+F2L:   every non-center slot on the cross side and the middle layer is correct.
+OLL:   every sticker on the far face shows that face's center color; where the pieces
+       sit is irrelevant.
+Solved: the cube is solved.
+
+Scan: cross = first index where the cross holds; F2L = first index at or after that
+where F2L holds; and so on. Each candidate cross color is scored by running the whole
+scan; the color giving a properly ordered shape with the earliest cross wins.
 ~~~
 
-**The scoping limit is shown, not buried.** Cross and solved are true of any solve by any
-method. The first-two-layers and last-layer stages are CFOP's model of a solve. A Roux
-solver has no F2L and no OLL in that sense, and a ZBLL solver collapses the last two into
-one algorithm. The splits are labelled as CFOP stages, and a solve whose progression does
-not look CFOP-shaped shows the two universal marks and suppresses the other two rather
-than printing a confident wrong number.
+**The scoping limit is shown, not buried.** These are CFOP's stages, not a universal
+property of a solve. A Roux solver has no first-two-layers and no last-layer-orientation
+phase in this sense. So the ordering is the test: a CFOP solve completes the four stages
+on four distinct, increasing moves, and a solve that does not is reported as
+unrecognised, with no stage times at all rather than a partial set of confident wrong
+ones. The splits are labelled as CFOP stages wherever they appear.
+
+The one coincidence that is allowed is the last-layer orientation and the solve landing
+on the same move. That is a genuine skip, not a detection failure.
 
 ## Records and history
 
