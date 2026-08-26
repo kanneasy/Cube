@@ -1,16 +1,16 @@
 // Touch. This is the app.
 //
-// Two gestures share one pointer stream and are told apart by a single raycast at
-// touch-down: land on a sticker and you are turning a layer, land on the background
-// and you are orbiting the view.
+// Three gestures share one pointer stream. A single raycast at touch-down tells the
+// first two apart: land on a sticker and you are turning a layer, land on the
+// background and you are orbiting. A second finger promotes either into a pinch.
 //
-// The raycast happens ONCE, at touch-down. Everything after that is driven from the
-// 2D screen delta, so nothing re-raycasts a moving mesh sixty times a second.
+// The raycast happens ONCE, at touch-down. Everything after is driven from the 2D
+// screen delta, so nothing re-raycasts a moving mesh sixty times a second.
 
+import { Vector3 } from 'three';
 import { TURNS, type Move, type TurnBase, type Vec3 } from '../../cube/state';
 import type { CubeRenderer } from './renderer';
 import { prefersReducedMotion, REDUCED_SETTLE_MS } from './motion';
-import { DEFAULT_PITCH, PITCH_CLAMP, PITCH_SNAPS, YAW_SNAPS } from './renderer';
 
 const DEG = Math.PI / 180;
 
@@ -23,13 +23,15 @@ const AXIS_LOCK_PX = 8;
 /** Release angular speed at or above which a flick fires in the direction of travel. */
 const FLICK_RAD_PER_S = 900 * DEG;
 
-/** Orbit: a drag of this fraction of viewport width is 180 degrees. */
+/** Orbit: a drag of this fraction of viewport width is 180 degrees, on either axis. */
 const ORBIT_GAIN = 0.55;
 const ORBIT_DECAY_MS = 260;
 const ORBIT_CUTOFF = 12 * DEG;
 
+/** Pinch travels a little before it engages, so resting two fingers is not a zoom. */
+const PINCH_THRESHOLD_PX = 12;
+
 const TURN_SPRING = { stiffness: 520, damping: 26, mass: 0.55 };
-const ORBIT_SPRING = { stiffness: 180, damping: 24, mass: 1 };
 
 export interface GestureCallbacks {
   /** A layer has been grabbed. Used to lift the layer and trace its boundary. */
@@ -68,18 +70,23 @@ interface PendingDrag {
 
 interface OrbitDrag {
   kind: 'orbit';
-  startX: number;
-  startY: number;
-  startYaw: number;
-  startPitch: number;
   lastX: number;
   lastY: number;
   lastTime: number;
-  velocityYaw: number;
-  velocityPitch: number;
+  /** Radians per second about the screen's own right and up axes. */
+  velocityRight: number;
+  velocityDown: number;
 }
 
-type Drag = PendingDrag | TurnDrag | OrbitDrag | null;
+/** Two fingers: the cube stops turning and starts scaling. */
+interface PinchDrag {
+  kind: 'pinch';
+  startDistance: number;
+  startZoom: number;
+  engaged: boolean;
+}
+
+type Drag = PendingDrag | TurnDrag | OrbitDrag | PinchDrag | null;
 
 const AXES: Vec3[] = [
   [1, 0, 0],
@@ -109,6 +116,10 @@ export function baseFor(axis: number, layer: number): TurnBase | null {
  * projecting both candidates to the screen and taking the one the drag agrees with
  * more resolves the ambiguity. It is then locked for the rest of the gesture, so a
  * curving thumb cannot switch layers halfway through a turn.
+ *
+ * Both the drag and the projection are +y UP here. They were not always: the renderer
+ * used to return a y-down projection while this compared it against a y-up drag, which
+ * inverted every turn that needed a vertical drag. See `project.ts`.
  */
 export function resolveAxis(
   renderer: CubeRenderer,
@@ -118,7 +129,7 @@ export function resolveAxis(
   dragY: number,
 ): { base: TurnBase; tangent: { x: number; y: number } } | null {
   const coords = renderer.cubieCoords(cubieIndex);
-  // Screen y grows downward; the projection helper returns y-up, so flip the drag.
+  // Pointer y grows downward; flip it so both sides of the dot product are y-up.
   const drag = { x: dragX, y: -dragY };
 
   let best: { base: TurnBase; tangent: { x: number; y: number }; score: number } | null = null;
@@ -146,6 +157,8 @@ export function resolveAxis(
 export class CubeGestures {
   private drag: Drag = null;
   private animation = 0;
+  /** Live contacts, so a second finger can promote a drag into a pinch. */
+  private readonly pointers = new Map<number, { x: number; y: number }>();
 
   /**
    * The clock and the frame scheduler are injected rather than reached for directly.
@@ -184,14 +197,33 @@ export class CubeGestures {
     return this.animation !== 0;
   }
 
+  private pinchDistance(): number {
+    const [a, b] = [...this.pointers.values()];
+    return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+  }
+
   private onDown = (event: PointerEvent): void => {
-    if (this.animating) return;
     event.preventDefault();
+    this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    // A second finger always means zoom, whatever the first one was doing.
+    if (this.pointers.size === 2) {
+      this.drag = {
+        kind: 'pinch',
+        startDistance: this.pinchDistance(),
+        startZoom: this.renderer.getZoom(),
+        engaged: false,
+      };
+      return;
+    }
+    if (this.pointers.size > 2) return;
+    if (this.animating) return;
+
     try {
       this.renderer.canvas.setPointerCapture(event.pointerId);
     } catch {
-      // A synthetic or already-captured pointer. Capture is an optimisation that keeps
-      // a drag alive past the canvas edge, not a requirement for the gesture to work.
+      // A synthetic or already-captured pointer. Capture keeps a drag alive past the
+      // canvas edge; it is not required for the gesture to work.
     }
 
     const hit = this.renderer.pickSticker(event.clientX, event.clientY);
@@ -206,18 +238,13 @@ export class CubeGestures {
       return;
     }
 
-    const { yaw, pitch } = this.renderer.getOrbit();
     this.drag = {
       kind: 'orbit',
-      startX: event.clientX,
-      startY: event.clientY,
-      startYaw: yaw,
-      startPitch: pitch,
       lastX: event.clientX,
       lastY: event.clientY,
       lastTime: this.scheduler.now(),
-      velocityYaw: 0,
-      velocityPitch: 0,
+      velocityRight: 0,
+      velocityDown: 0,
     };
   };
 
@@ -226,9 +253,42 @@ export class CubeGestures {
   // run before the next frame, writing back the pre-drag value -- the user drags, sees
   // the layer follow, releases, and watches the turn silently revert.
   private onMove = (event: PointerEvent): void => {
+    if (this.pointers.has(event.pointerId)) {
+      this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    }
     const drag = this.drag;
     if (!drag) return;
     event.preventDefault();
+
+    if (drag.kind === 'pinch') {
+      const distance = this.pinchDistance();
+      if (!distance || !drag.startDistance) return;
+      if (!drag.engaged && Math.abs(distance - drag.startDistance) < PINCH_THRESHOLD_PX) return;
+      drag.engaged = true;
+      // Fingers apart means bigger, so the camera comes IN: zoom scale is inverse.
+      this.renderer.setZoom(drag.startZoom * (drag.startDistance / distance));
+      return;
+    }
+
+    if (drag.kind === 'orbit') {
+      const dx = event.clientX - drag.lastX;
+      const dy = event.clientY - drag.lastY;
+      const width = this.renderer.canvas.clientWidth || 1;
+      const perPixel = Math.PI / (ORBIT_GAIN * width);
+
+      // Incremental, about the axes the screen defines right now -- which is what makes
+      // this continuous in every direction with no clamp and no gimbal lock.
+      this.renderer.orbitBy(dx * perPixel, dy * perPixel);
+
+      const t = this.scheduler.now();
+      const dt = Math.max(1, t - drag.lastTime) / 1000;
+      drag.velocityRight = (dx * perPixel) / dt;
+      drag.velocityDown = (dy * perPixel) / dt;
+      drag.lastX = event.clientX;
+      drag.lastY = event.clientY;
+      drag.lastTime = t;
+      return;
+    }
 
     const dx = event.clientX - drag.startX;
     const dy = event.clientY - drag.startY;
@@ -254,31 +314,12 @@ export class CubeGestures {
       return;
     }
 
-    if (drag.kind === 'turn') {
-      this.applyTurn(drag, dx, dy);
-      return;
-    }
-
-    // Orbit. 1:1 with the finger, no smoothing.
-    const width = this.renderer.canvas.clientWidth || 1;
-    const perPixel = Math.PI / (ORBIT_GAIN * width);
-    const yaw = drag.startYaw + dx * perPixel;
-    const pitch = Math.max(-PITCH_CLAMP, Math.min(PITCH_CLAMP, drag.startPitch + dy * perPixel));
-
-    const t = this.scheduler.now();
-    const dt = Math.max(1, t - drag.lastTime) / 1000;
-    drag.velocityYaw = ((event.clientX - drag.lastX) * perPixel) / dt;
-    drag.velocityPitch = ((event.clientY - drag.lastY) * perPixel) / dt;
-    drag.lastX = event.clientX;
-    drag.lastY = event.clientY;
-    drag.lastTime = t;
-
-    this.renderer.setOrbit(yaw, pitch);
+    this.applyTurn(drag, dx, dy);
   };
 
   private applyTurn(drag: TurnDrag, dx: number, dy: number): void {
     const edge = this.renderer.screenEdgeLength() || 1;
-    // Only the component of the drag along the layer's tangent turns it.
+    // Only the component of the drag along the layer's tangent turns it. Both are y-up.
     const along = dx * drag.tangent.x + -dy * drag.tangent.y;
     const raw = (along / (TURN_GAIN * edge)) * (90 * DEG);
     const angle = Math.max(-LIVE_CLAMP, Math.min(LIVE_CLAMP, raw));
@@ -302,25 +343,32 @@ export class CubeGestures {
   }
 
   private onUp = (event: PointerEvent): void => {
+    this.pointers.delete(event.pointerId);
     const drag = this.drag;
+
+    // Lifting one finger of a pinch ends the pinch rather than resuming an orbit
+    // mid-gesture, which would jump the cube.
+    if (drag?.kind === 'pinch') {
+      if (this.pointers.size < 2) this.drag = null;
+      return;
+    }
+
     this.drag = null;
     if (!drag) return;
     try {
       this.renderer.canvas.releasePointerCapture(event.pointerId);
     } catch {
-      // The pointer may already have been released; nothing to undo.
+      // Already released; nothing to undo.
     }
 
     if (drag.kind === 'pending') {
       this.callbacks.onRelease();
       return;
     }
-
     if (drag.kind === 'orbit') {
-      this.settleOrbit(drag);
+      this.glideOrbit(drag);
       return;
     }
-
     this.settleTurn(drag);
   };
 
@@ -334,8 +382,7 @@ export class CubeGestures {
         ? (drag.velocity > 0 ? Math.floor(drag.angle / quarter) + 1 : Math.ceil(drag.angle / quarter) - 1) * quarter
         : Math.round(drag.angle / quarter) * quarter;
 
-    const settleMs = 170;
-    this.callbacks.onSnapStart(settleMs);
+    this.callbacks.onSnapStart(170);
 
     // The release velocity is carried into the spring as initial velocity.
     this.spring(drag.angle, target, drag.velocity, TURN_SPRING, (value) => this.renderer.setLayerRotation(drag.base, value), () => {
@@ -350,16 +397,21 @@ export class CubeGestures {
     });
   }
 
-  private settleOrbit(drag: OrbitDrag): void {
-    let { yaw, pitch } = this.renderer.getOrbit();
-    // Momentum is the part of the orbit most likely to be unwelcome; drop it entirely
-    // and go straight to the nearest canonical view.
-    if (prefersReducedMotion()) {
-      this.snapOrbit(yaw, pitch);
-      return;
-    }
-    let vYaw = drag.velocityYaw;
-    let vPitch = drag.velocityPitch;
+  /**
+   * Momentum, and nothing after it. The orbit used to settle onto one of eight
+   * canonical poses; it does not any more, because a cube that repositions itself when
+   * you let go is not a cube you are holding.
+   */
+  private glideOrbit(drag: OrbitDrag): void {
+    if (prefersReducedMotion()) return;
+
+    let vRight = drag.velocityRight;
+    let vDown = drag.velocityDown;
+    if (Math.hypot(vRight, vDown) < ORBIT_CUTOFF) return;
+
+    // The screen axes are captured once: the cube turns under them, they do not turn
+    // with it, so a glide keeps going the way the finger was going.
+    const { up, right } = this.renderer.screenAxes();
     let last = this.scheduler.now();
 
     const glide = (): void => {
@@ -367,51 +419,19 @@ export class CubeGestures {
       const dt = Math.min(0.05, Math.max(0.001, (t - last) / 1000));
       last = t;
       const decay = Math.exp(-(dt * 1000) / ORBIT_DECAY_MS);
-      vYaw *= decay;
-      vPitch *= decay;
-      yaw += vYaw * dt;
-      pitch = Math.max(-PITCH_CLAMP, Math.min(PITCH_CLAMP, pitch + vPitch * dt));
-      this.renderer.setOrbit(yaw, pitch);
+      vRight *= decay;
+      vDown *= decay;
+      this.renderer.spinBy(up, vRight * dt);
+      this.renderer.spinBy(right, vDown * dt);
 
-      if (Math.hypot(vYaw, vPitch) > ORBIT_CUTOFF) {
+      if (Math.hypot(vRight, vDown) > ORBIT_CUTOFF) {
         this.animation = this.scheduler.raf(glide);
         return;
       }
       this.animation = 0;
-      this.snapOrbit(yaw, pitch);
     };
 
     this.animation = this.scheduler.raf(glide);
-  }
-
-  /**
-   * The orbit always lands on one of eight canonical three-quarter views. A free orbit
-   * leaves the cube in oblique poses where stickers are foreshortened and unreadable at
-   * speed; every one of these eight shows three faces cleanly.
-   */
-  private snapOrbit(yaw: number, pitch: number): void {
-    const nearest = (value: number, options: number[], period?: number): number => {
-      let best = options[0];
-      let bestDelta = Infinity;
-      for (const option of options) {
-        let delta = option - value;
-        if (period) delta -= Math.round(delta / period) * period;
-        if (Math.abs(delta) < Math.abs(bestDelta)) {
-          bestDelta = delta;
-          best = value + delta;
-        }
-      }
-      return best;
-    };
-
-    const targetYaw = nearest(yaw, YAW_SNAPS, Math.PI * 2);
-    const targetPitch = nearest(pitch, PITCH_SNAPS);
-    const fromYaw = yaw;
-    const fromPitch = pitch;
-
-    this.spring(0, 1, 0, ORBIT_SPRING, (p) => {
-      this.renderer.setOrbit(fromYaw + (targetYaw - fromYaw) * p, fromPitch + (targetPitch - fromPitch) * p);
-    });
   }
 
   /**
@@ -472,4 +492,5 @@ export class CubeGestures {
   }
 }
 
-export const DEFAULTS = { DEFAULT_PITCH, TURN_GAIN, FLICK_RAD_PER_S, AXIS_LOCK_PX, ORBIT_GAIN };
+export const DEFAULTS = { TURN_GAIN, FLICK_RAD_PER_S, AXIS_LOCK_PX, ORBIT_GAIN, PINCH_THRESHOLD_PX };
+export { Vector3 };

@@ -1,40 +1,32 @@
 import { describe, it, expect } from 'vitest';
 import { baseFor, resolveAxis } from './gestures';
+import { PerspectiveCamera } from 'three';
 import { DEFAULT_PITCH, DEFAULT_YAW } from './renderer';
+import { projectDirection } from './project';
 import { TURNS, type TurnBase, type Vec3 } from '../../cube/state';
 import type { CubeRenderer } from './renderer';
 
-// A mock renderer carrying the app's real default camera, so these assertions are
-// about the view the user actually sees rather than an invented projection.
+// A mock renderer carrying the app's real default camera AND its real projection
+// function. Reimplementing the projection here is what hid the inverted-drag bug:
+// this file's own version was correct and the renderer's was not, so the tests agreed
+// with the intention rather than with the code.
 function mockRenderer(coords: Vec3): CubeRenderer {
+  const camera = new PerspectiveCamera(28, 390 / 524, 0.1, 100);
+  const distance = 12;
   const cp = Math.cos(DEFAULT_PITCH);
-  const eye = [
-    12 * cp * Math.sin(DEFAULT_YAW),
-    12 * Math.sin(DEFAULT_PITCH),
-    12 * cp * Math.cos(DEFAULT_YAW),
-  ] as const;
-
-  const norm = (v: number[]) => {
-    const l = Math.hypot(...v);
-    return v.map((x) => x / l);
-  };
-  const cross = (a: number[], b: number[]) => [
-    a[1] * b[2] - a[2] * b[1],
-    a[2] * b[0] - a[0] * b[2],
-    a[0] * b[1] - a[1] * b[0],
-  ];
-  const forward = norm(eye.map((x) => -x));
-  const right = norm(cross(forward, [0, 1, 0]));
-  const screenUp = cross(right, forward);
+  camera.position.set(
+    distance * cp * Math.sin(DEFAULT_YAW),
+    distance * Math.sin(DEFAULT_PITCH),
+    distance * cp * Math.cos(DEFAULT_YAW),
+  );
+  camera.up.set(0, 1, 0);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  camera.updateProjectionMatrix();
 
   return {
     cubieCoords: () => coords,
-    projectDirection: (_origin: Vec3, direction: Vec3) => {
-      const x = direction[0] * right[0] + direction[1] * right[1] + direction[2] * right[2];
-      const y = direction[0] * screenUp[0] + direction[1] * screenUp[1] + direction[2] * screenUp[2];
-      const l = Math.hypot(x, y) || 1;
-      return { x: x / l, y: y / l };
-    },
+    projectDirection: (origin: Vec3, direction: Vec3) => projectDirection(camera, origin, direction),
   } as unknown as CubeRenderer;
 }
 
@@ -57,14 +49,52 @@ describe('every axis and layer names a real move', () => {
   });
 });
 
+// The bug a user hit on a real phone: the layer was right and the DIRECTION was
+// inverted on every drag with a vertical component. Nothing above tests direction --
+// they all assert which layer, never which way -- so the renderer could return a
+// y-flipped projection and every one of them still passed.
+describe('which way a drag turns the layer', () => {
+  const sign = (coords: Vec3, normal: Vec3, drag: readonly [number, number]) => {
+    const r = resolveAxis(mockRenderer(coords), 0, normal, drag[0], drag[1])!;
+    // Reproduces applyTurn's dot product exactly: both sides y-up.
+    return Math.sign(drag[0] * r.tangent.x + -drag[1] * r.tangent.y);
+  };
+
+  it('turns the right layer clockwise when its front face is dragged upward', () => {
+    // Dragging up the right-hand side of the front face carries the front of the R
+    // layer toward the top and then the back. That is R, clockwise.
+    expect(sign([1, -1, 1], [0, 0, 1], DRAG.up)).toBe(1);
+  });
+
+  it('turns the right layer counter-clockwise when dragged downward', () => {
+    expect(sign([1, -1, 1], [0, 0, 1], DRAG.down)).toBe(-1);
+  });
+
+  it('turns the top layer one way and only one way for a given drag', () => {
+    expect(sign([1, 1, 0], [0, 1, 0], DRAG.right)).toBe(1);
+    expect(sign([1, 1, 0], [0, 1, 0], DRAG.left)).toBe(-1);
+  });
+
+  it('turns the bottom layer the way it always did', () => {
+    // The one the user reported as already correct: horizontal drag, so the sign error
+    // in y never reached it. It must not change now that y is fixed.
+    expect(sign([1, -1, 1], [0, 0, 1], DRAG.right)).toBe(1);
+    expect(sign([1, -1, 1], [0, 0, 1], DRAG.left)).toBe(-1);
+  });
+});
+
 describe('resolving which layer a drag grabbed', () => {
   const cases: { label: string; coords: Vec3; normal: Vec3; drag: readonly [number, number]; expected: TurnBase }[] = [
     // Front face, bottom-right corner. Horizontal drag rolls the bottom layer;
     // vertical drag rolls the right layer.
     { label: 'front corner dragged sideways turns the bottom layer', coords: [1, -1, 1], normal: [0, 0, 1], drag: DRAG.right, expected: 'D' },
     { label: 'front corner dragged up turns the right layer', coords: [1, -1, 1], normal: [0, 0, 1], drag: DRAG.up, expected: 'R' },
-    // Top face, front-right corner.
-    { label: 'top corner dragged sideways turns the front layer', coords: [1, 1, 1], normal: [0, 1, 0], drag: DRAG.right, expected: 'F' },
+    // Top face, along each edge. NOT the corner: on the top-front-right corner a purely
+    // horizontal drag scores identically for R and F (37.372 each, measured), because
+    // the two candidate tangents are mirror images about the horizontal there. That is
+    // a real tie, not a missing rule, and a test of it is a test of iteration order.
+    { label: 'top front edge dragged sideways turns the front layer', coords: [0, 1, 1], normal: [0, 1, 0], drag: DRAG.right, expected: 'F' },
+    { label: 'top right edge dragged sideways turns the right layer', coords: [1, 1, 0], normal: [0, 1, 0], drag: DRAG.right, expected: 'R' },
     { label: 'top corner dragged away turns the right layer', coords: [1, 1, 1], normal: [0, 1, 0], drag: DRAG.up, expected: 'R' },
     // Centres reach the slices, which is the whole reason slice moves exist in this app.
     { label: 'front centre dragged sideways turns the middle horizontal slice', coords: [0, 0, 1], normal: [0, 0, 1], drag: DRAG.right, expected: 'E' },
@@ -108,6 +138,15 @@ describe('resolving which layer a drag grabbed', () => {
     expect(a.base).toBe(b.base);
     // ...and the tangent points the same way, so the sign of the drag decides.
     expect(Math.sign(a.tangent.x)).toBe(Math.sign(b.tangent.x));
+  });
+
+  it('resolves a genuinely ambiguous drag deterministically', () => {
+    // Horizontal on the top-front-right corner is an exact tie. It must still land on
+    // the same layer every time rather than flickering between two.
+    const first = resolveAxis(mockRenderer([1, 1, 1]), 0, [0, 1, 0], ...DRAG.right)!;
+    for (let i = 0; i < 5; i++) {
+      expect(resolveAxis(mockRenderer([1, 1, 1]), 0, [0, 1, 0], ...DRAG.right)!.base).toBe(first.base);
+    }
   });
 
   it('reports a tangent that dragging along turns the layer clockwise', () => {

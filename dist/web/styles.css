@@ -73,12 +73,6 @@ button {
   justify-content: space-between;
 }
 
-.chip-hit {
-  min-height: var(--size-tap-min);
-  display: inline-flex;
-  align-items: center;
-}
-
 .chip {
   height: 28px;
   padding-inline: var(--space-12);
@@ -814,7 +808,6 @@ button {
    tap, which is the usual way hover styles go wrong on a phone. */
 @media (hover: hover) and (pointer: fine) {
   .control:not(:disabled):hover,
-  .chip-hit:hover .chip,
   .rail__menu:hover,
   .board__link:hover,
   .choice:hover {
@@ -824,7 +817,7 @@ button {
 }
 
 .control:not(:disabled):active,
-.chip-hit:active .chip {
+.chip:active {
   border-color: var(--color-line-strong);
 }
 

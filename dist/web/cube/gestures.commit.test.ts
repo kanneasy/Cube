@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { CubeGestures } from './gestures';
 import { DEFAULT_PITCH, DEFAULT_YAW } from './renderer';
 import type { CubeRenderer } from './renderer';
+import { Vector3 } from 'three';
 import type { Move, Vec3 } from '../../cube/state';
 
 // A clock and frame scheduler under test control. requestAnimationFrame does not run
@@ -71,8 +72,11 @@ function mockRenderer(coords: Vec3) {
       return { x: x / l, y: y / l };
     },
     setLayerRotation: (base: string | null, angle: number) => layerCalls.push({ base, angle }),
-    setOrbit: () => {},
-    getOrbit: () => ({ yaw: DEFAULT_YAW, pitch: DEFAULT_PITCH }),
+    orbitBy: () => {},
+    spinBy: () => {},
+    screenAxes: () => ({ up: new Vector3(0, 1, 0), right: new Vector3(1, 0, 0) }),
+    getZoom: () => 1,
+    setZoom: () => {},
   };
   return { renderer: renderer as unknown as CubeRenderer, canvas, layerCalls };
 }

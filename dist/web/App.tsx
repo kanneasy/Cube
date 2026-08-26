@@ -244,6 +244,15 @@ export function App() {
       },
       session: () => solveRef.current.session,
       solves: () => libraryRef.current.solves,
+      // Renderer diagnostics: the orbit and zoom are otherwise only observable by
+      // watching, and the render loop does not run in a backgrounded tab.
+      zoom: () => rendererRef.current?.getZoom(),
+      setZoom: (z: number) => rendererRef.current?.setZoom(z),
+      orbitBy: (right: number, down: number) => rendererRef.current?.orbitBy(right, down),
+      orientation: () => {
+        const q = rendererRef.current?.orientationQuaternion();
+        return q ? [q.x, q.y, q.z, q.w] : null;
+      },
     };
   });
 
@@ -258,19 +267,13 @@ export function App() {
       <div />
 
       <div className="rail gutter">
-        {/* The chip is 28px tall by design, which is well under a thumb-sized target,
-            so the button around it is 44px and the chip is what you see inside it. */}
-        <button
-          className="chip-hit"
-          aria-label={`Mode: ${mode}. Tap to switch.`}
-          onClick={() => {
-            const next: TimerMode = mode === 'casual' ? 'competition' : 'casual';
-            setMode(next);
-            startFresh({ mode: next });
-          }}
-        >
-          <span className="chip">{mode === 'casual' ? 'CASUAL' : 'COMPETITION'}</span>
-        </button>
+        {/* Affirmative state, not a control. Tapping it used to switch mode AND throw
+            away the scramble, which is a lot to do by accident on the one thing sitting
+            under your thumb at the top of the screen. Mode lives in Settings now, where
+            changing it is deliberate. */}
+        <span className="chip" role="status" aria-label={`Timer mode: ${mode}`}>
+          {mode === 'casual' ? 'CASUAL' : 'COMPETITION'}
+        </span>
         <button className="rail__menu" onClick={() => setMenuOpen(true)}>
           MENU
         </button>

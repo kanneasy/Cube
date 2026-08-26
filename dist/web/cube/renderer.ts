@@ -7,19 +7,36 @@
 import * as THREE from 'three';
 import { applyMove, stickersOf, TURNS, type CubeState, type Face, type Move, type TurnBase, type Vec3 } from '../../cube/state';
 import { BODY_COLOR, SHADE, type Palette } from './palette';
+import { projectDirection as projectDirectionOnto } from './project';
 import { prefersReducedMotion } from './motion';
 
 const CUBIE = 0.98; // leaves a hairline of black between cubies
 const SPACING = 1.0;
 
-/** azimuth +45deg, elevation +24deg: the default three-quarter view showing U, F and R. */
+/**
+ * Where the camera sits: azimuth +45deg, elevation +24deg, the three-quarter view
+ * showing U, F and R. The CAMERA no longer moves. The cube does.
+ *
+ * It used to be the other way round -- a yaw/pitch camera orbit, pitch clamped to
+ * +/-72deg so nobody ended up edge-on, settling onto one of eight canonical poses so
+ * stickers stayed readable. Both were argued decisions and both are gone, because a
+ * person holding the phone asked to "rotate the cube fully and continuously in any
+ * direction" and neither a clamp nor a snap can do that. Rotating the cube as a
+ * trackball also has no gimbal lock, which a yaw/pitch camera does the moment pitch
+ * passes vertical.
+ */
 export const DEFAULT_YAW = Math.PI / 4;
 export const DEFAULT_PITCH = (24 * Math.PI) / 180;
-export const PITCH_CLAMP = (72 * Math.PI) / 180;
 
-/** The eight canonical poses an orbit settles onto. Every one shows three faces cleanly. */
-export const YAW_SNAPS = [45, 135, 225, 315].map((d) => (d * Math.PI) / 180);
-export const PITCH_SNAPS = [24, -24].map((d) => (d * Math.PI) / 180);
+/**
+ * Zoom limits, expressed as a MULTIPLE of the resting framing rather than as camera
+ * distances. Absolute distances were viewport-dependent: the framing solve lands
+ * around 8 units on a phone, so a 7.2 near limit allowed ten percent of zoom-in and
+ * called it pinch-to-zoom.
+ */
+export const ZOOM_MIN = 0.5; // twice as close
+export const ZOOM_MAX = 2.5; // two and a half times further out
+export const ZOOM_DEFAULT = 12;
 
 interface StickerRef {
   readonly mesh: THREE.Mesh;
@@ -55,10 +72,13 @@ export class CubeRenderer {
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
 
-  private yaw = DEFAULT_YAW;
-  private pitch = DEFAULT_PITCH;
-  private distance = 12;
+  /** The cube's own orientation. A free trackball: no clamp, no snap, no gimbal lock. */
+  private readonly orientation = new THREE.Quaternion();
+  private distance = ZOOM_DEFAULT;
+  /** Set once by resize(); zoom multiplies it. */
+  private framedDistance = ZOOM_DEFAULT;
 
+  private zoomScale = 1;
   private liveBase: TurnBase | null = null;
   private liveAngle = 0;
   private concealed = false;
@@ -254,13 +274,48 @@ export class CubeRenderer {
     this.concealed = concealed;
   }
 
-  setOrbit(yaw: number, pitch: number): void {
-    this.yaw = yaw;
-    this.pitch = THREE.MathUtils.clamp(pitch, -PITCH_CLAMP, PITCH_CLAMP);
+  /**
+   * Turn the cube about the axes the SCREEN defines, not the ones the world does.
+   *
+   * Dragging right always spins the cube rightward from where you are looking, however
+   * far it has already been turned -- which is what makes a trackball feel like a hand
+   * on an object rather than like two sliders.
+   */
+  orbitBy(radiansRight: number, radiansDown: number): void {
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
+    const q = new THREE.Quaternion()
+      .setFromAxisAngle(up, radiansRight)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(right, radiansDown));
+    this.orientation.premultiply(q).normalize();
   }
 
-  getOrbit(): { yaw: number; pitch: number } {
-    return { yaw: this.yaw, pitch: this.pitch };
+  /** Momentum: keep turning about one screen-space axis after the finger has gone. */
+  spinBy(axis: THREE.Vector3, radians: number): void {
+    this.orientation.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, radians)).normalize();
+  }
+
+  /** The screen's own axes in world space, for a momentum spin to keep using. */
+  screenAxes(): { up: THREE.Vector3; right: THREE.Vector3 } {
+    return {
+      up: new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion),
+      right: new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion),
+    };
+  }
+
+  /** 1 is the framing resize() chose; smaller pulls the camera in. */
+  setZoom(scale: number): void {
+    this.zoomScale = THREE.MathUtils.clamp(scale, ZOOM_MIN, ZOOM_MAX);
+    this.distance = this.framedDistance * this.zoomScale;
+  }
+
+  getZoom(): number {
+    return this.zoomScale;
+  }
+
+  /** Read-only view of the cube's orientation, for diagnostics. */
+  orientationQuaternion(): THREE.Quaternion {
+    return this.orientation.clone();
   }
 
   /**
@@ -291,13 +346,15 @@ export class CubeRenderer {
     return this.cubies[index].coords;
   }
 
-  /** Project a world direction into screen space, for mapping a drag to an axis. */
+  /**
+   * Where a direction in the cube's own frame points on screen, +y up.
+   *
+   * Shared with the gesture tests rather than reimplemented beside them: the previous
+   * split -- a renderer that negated y and a test mock that did not -- is the whole
+   * reason every vertical drag turned the wrong way.
+   */
   projectDirection(origin: Vec3, direction: Vec3): THREE.Vector2 {
-    const a = new THREE.Vector3(...origin).project(this.camera);
-    const b = new THREE.Vector3(origin[0] + direction[0], origin[1] + direction[1], origin[2] + direction[2]).project(
-      this.camera,
-    );
-    return new THREE.Vector2(b.x - a.x, -(b.y - a.y)).normalize();
+    return projectDirectionOnto(this.camera, origin, direction, this.orientation);
   }
 
   /**
@@ -306,8 +363,8 @@ export class CubeRenderer {
    */
   screenEdgeLength(): number {
     const rect = this.renderer.domElement.getBoundingClientRect();
-    const a = new THREE.Vector3(-1.5, 1.5, 1.5).project(this.camera);
-    const b = new THREE.Vector3(1.5, 1.5, 1.5).project(this.camera);
+    const a = new THREE.Vector3(-1.5, 1.5, 1.5).applyQuaternion(this.orientation).project(this.camera);
+    const b = new THREE.Vector3(1.5, 1.5, 1.5).applyQuaternion(this.orientation).project(this.camera);
     return (Math.hypot(b.x - a.x, b.y - a.y) / 2) * rect.width;
   }
 
@@ -317,7 +374,7 @@ export class CubeRenderer {
     this.camera.aspect = w / h;
     // Frame so the cube's projected width is 78% of the stage. Projected size is
     // very nearly inversely proportional to distance, so two corrections converge.
-    this.distance = 12;
+    this.distance = ZOOM_DEFAULT;
     for (let i = 0; i < 3; i++) {
       this.placeCamera();
       this.camera.updateProjectionMatrix();
@@ -325,6 +382,10 @@ export class CubeRenderer {
       if (width <= 0) break;
       this.distance *= width / 0.78;
     }
+    // That solved for the resting framing; zoom is expressed relative to it, so a
+    // pinch survives a rotation and a resize.
+    this.framedDistance = this.distance;
+    this.setZoom(this.zoomScale);
     this.placeCamera();
     this.camera.updateProjectionMatrix();
     // updateStyle defaults true; passing false makes the canvas take the drawing-buffer
@@ -338,7 +399,7 @@ export class CubeRenderer {
     for (const sx of [-1.5, 1.5]) {
       for (const sy of [-1.5, 1.5]) {
         for (const sz of [-1.5, 1.5]) {
-          const p = new THREE.Vector3(sx, sy, sz).project(this.camera);
+          const p = new THREE.Vector3(sx, sy, sz).applyQuaternion(this.orientation).project(this.camera);
           min = Math.min(min, p.x);
           max = Math.max(max, p.x);
         }
@@ -348,14 +409,15 @@ export class CubeRenderer {
   }
 
   private placeCamera(): void {
-    const cp = Math.cos(this.pitch);
+    const cp = Math.cos(DEFAULT_PITCH);
     this.camera.position.set(
-      this.distance * cp * Math.sin(this.yaw),
-      this.distance * Math.sin(this.pitch),
-      this.distance * cp * Math.cos(this.yaw),
+      this.distance * cp * Math.sin(DEFAULT_YAW),
+      this.distance * Math.sin(DEFAULT_PITCH),
+      this.distance * cp * Math.cos(DEFAULT_YAW),
     );
     this.camera.up.set(0, 1, 0); // no camera roll, ever
     this.camera.lookAt(0, 0, 0);
+    this.root.quaternion.copy(this.orientation);
   }
 
   private applyTransforms(): void {

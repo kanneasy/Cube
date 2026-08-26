@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { reduce, startSession, type Action, type Session } from '../solve/session';
 import { solvedCube } from '../cube/state';
-import { parseAlg } from '../cube/notation';
+import { inverseMove, parseAlg } from '../cube/notation';
 import { generateScramble, solutionFrom } from '../solve/oracle';
 import { HintPlanner } from '../solve/hints';
 import type { Goal, TimerMode } from '../store/records';
@@ -37,6 +37,8 @@ export interface SolveController {
 }
 
 const REFUSAL_MS = 1400;
+/** A shade quicker than a turn's ~170ms settle: a correction, not a move. */
+const UNDO_MS = 150;
 
 export function useSolve(
   rendererRef: React.RefObject<CubeRenderer | null>,
@@ -51,6 +53,7 @@ export function useSolve(
   const [serial, setSerial] = useState(0);
   const refusalTimer = useRef<number | undefined>(undefined);
   const cancelIntro = useRef<(() => void) | null>(null);
+  const cancelUndo = useRef<(() => void) | null>(null);
   // One planner for the life of the component; reset on every new scramble.
   const plannerRef = useRef<HintPlanner | null>(null);
 
@@ -85,9 +88,27 @@ export function useSolve(
         return;
       }
       sessionRef.current = after;
-      // Synchronously, before React re-renders: the stage must never show a state the
-      // logic has already moved past.
-      if (after.cube !== before.cube) rendererRef.current?.setState(after.cube);
+      const renderer = rendererRef.current;
+
+      if (action.type === 'undo' && before.log.length > 0 && renderer) {
+        // Run the move backwards rather than snapping the cube to the earlier state.
+        // An undo that teleports gives you no idea WHICH move just came off, and on a
+        // cube that is the whole content of the action.
+        const removed = before.log[before.log.length - 1].move;
+        cancelUndo.current?.();
+        cancelUndo.current = renderer.playSequence(before.cube, [inverseMove(removed)], UNDO_MS, () => {
+          cancelUndo.current = null;
+          // Land on the authoritative state rather than on wherever the animation got
+          // to, so a cancelled or skipped animation can never leave the two apart.
+          renderer.setState(sessionRef.current.cube);
+        });
+      } else if (after.cube !== before.cube) {
+        // Synchronously, before React re-renders: the stage must never show a state the
+        // logic has already moved past.
+        cancelUndo.current?.();
+        cancelUndo.current = null;
+        renderer?.setState(after.cube);
+      }
       force();
     },
     [announceRefusal, rendererRef],
@@ -169,6 +190,7 @@ export function useSolve(
     () => () => {
       window.clearTimeout(refusalTimer.current);
       cancelIntro.current?.();
+      cancelUndo.current?.();
     },
     [],
   );
@@ -178,6 +200,11 @@ export function useSolve(
   const dispatchWithIntroCancel = useCallback(
     (action: Action) => {
       if (action.type === 'turn' || action.type === 'undo') cancelIntro.current?.();
+      // A new turn during an undo animation abandons it; the turn is the newer intent.
+      if (action.type === 'turn') {
+        cancelUndo.current?.();
+        cancelUndo.current = null;
+      }
       dispatch(action);
     },
     [dispatch],

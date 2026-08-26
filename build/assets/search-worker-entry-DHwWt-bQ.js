@@ -1,0 +1,2 @@
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/inside-VUJSPBRA-BsAz9Xj5.js","assets/index-CrRjsNbl.js","assets/index-Cu-AfaGm.css"])))=>i.map(i=>d[i]);
+import{e,_ as o}from"./index-CrRjsNbl.js";e.expose&&o(()=>import("./inside-VUJSPBRA-BsAz9Xj5.js"),__vite__mapDeps([0,1,2])).then(()=>{globalThis.postMessage?globalThis.postMessage("comlink-exposed"):globalThis.process.getBuiltinModule("node:worker_threads").parentPort?.postMessage("comlink-exposed")});var t=import.meta.url;export{t as WORKER_ENTRY_FILE_URL};
