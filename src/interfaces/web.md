@@ -393,3 +393,14 @@ The acceptance scenario in `src/roadmap/mvp.md` still reads "F2L, OLL, and PLL s
 and is recorded as an open FAIL rather than edited to match. Changing a scenario after
 its story is picked up is a scope change and belongs to the user, not to whoever noticed
 the mismatch.
+
+
+## Correction: the hint token is always a quarter turn
+
+Set 2026-08-26, from use on a real iPhone.
+
+Turning was clamped to one quarter per drag in the same pass. A hint of `U2` then names
+a move no gesture can perform -- the user turns once, asks again, and sees another
+U-family token, which reads as the hint being stuck. Half turns are split into two
+quarter turns and offered one at a time, so every token on screen is a thing a thumb can
+do. `SOLVER'S ROUTE` beneath it is unchanged and still true of every one.

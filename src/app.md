@@ -190,6 +190,12 @@ the next single turn. Taking one marks the solve as practice: it is excluded fro
 record boards and from the averages, permanently and visibly, from the moment the hint is
 taken rather than at the end.
 
+**A hint only ever names a quarter turn.** A drag commits at most one quarter turn, so a
+hint reading `U2` asks for something no single gesture can do: you turn once, ask again,
+and get another U-family hint, which reads as the hint being stuck rather than as
+progress. Half turns in the computed solution are therefore split into two quarter turns
+and served one at a time. Advice belongs in the vocabulary the hands have.
+
 **A hint plans once and serves the plan in order.** The obvious implementation, solving
 afresh on every request and revealing the new first move, does not converge. The solver
 is two-phase and so not optimal, and it is deterministic per position, which means its

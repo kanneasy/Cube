@@ -24,6 +24,28 @@ export interface HintPlan {
 const sameMove = (a: Move, b: Move) => a.base === b.base && a.amount === b.amount;
 
 /**
+ * Split half turns into two quarter turns.
+ *
+ * A drag commits at most one quarter turn, so a hint reading `U2` asks for something no
+ * single gesture can do: you turn once, ask again, and get another U-family hint, which
+ * reads as the hint being stuck. Advice has to be in the vocabulary the hands have --
+ * so a half turn is offered as two quarters and the plan tracks each one.
+ *
+ * Quarter turns, including primes, are left alone: a prime is one drag.
+ */
+export function toQuarterTurns(moves: readonly Move[]): Move[] {
+  const out: Move[] = [];
+  for (const move of moves) {
+    if (move.amount === 2) {
+      out.push({ base: move.base, amount: 1 }, { base: move.base, amount: 1 });
+    } else {
+      out.push(move);
+    }
+  }
+  return out;
+}
+
+/**
  * How far into `plan` the given log has travelled, or null if the log has left the
  * plan and it must be recomputed.
  */
@@ -67,7 +89,7 @@ export class HintPlanner {
       if (progressAlong(this.plan, log) !== null) return null; // solved; nothing left
     }
 
-    const solution = await this.solve(log);
+    const solution = toQuarterTurns(await this.solve(log));
     if (solution.length === 0) {
       this.plan = null;
       return null;
