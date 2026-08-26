@@ -16,6 +16,9 @@ import { Inspection } from './components/Inspection';
 import { MenuSheet } from './components/MenuSheet';
 import { UpdatePrompt } from './components/UpdatePrompt';
 
+/** Remembered so the notice is genuinely one-time rather than shown every launch. */
+const INSTALL_NOTICE_KEY = 'quarter-turn:install-notice-dismissed';
+
 function splitTime(text: string): [string, string] {
   const i = text.lastIndexOf('.');
   return i < 0 ? [text, ''] : [text.slice(0, i), text.slice(i)];
@@ -60,6 +63,7 @@ export function App() {
   const [dailyDate, setDailyDate] = useState<string | null>(null);
   const [today, setToday] = useState('');
   const [installed, setInstalled] = useState(true);
+  const [noticeDismissed, setNoticeDismissed] = useState(false);
 
   const library = useLibrary();
   const solve = useSolve(rendererRef, audioRef.current, mode);
@@ -100,6 +104,14 @@ export function App() {
       window.matchMedia('(display-mode: standalone)').matches ||
       (window.navigator as unknown as { standalone?: boolean }).standalone === true;
     setInstalled(standalone);
+    try {
+      // localStorage rather than IndexedDB: this is a per-device UI preference, not
+      // solve data, and it must not fail with the database in a private window --
+      // where this notice is arguably most relevant.
+      setNoticeDismissed(window.localStorage.getItem(INSTALL_NOTICE_KEY) === '1');
+    } catch {
+      // Storage blocked entirely. Showing the notice again is the harmless direction.
+    }
 
     solveRef.current.newScramble();
     void libraryRef.current.todaysScramble().then(({ date }) => setToday(date));
@@ -262,9 +274,23 @@ export function App() {
             NEXT SCRAMBLE
           </button>
         )}
-        {!installed && (
+        {!installed && !noticeDismissed && (
           <div className="install-note">
-            Add to your home screen. In a Safari tab, the edge swipe fights the cube.
+            <span>Add to your home screen. In a Safari tab, the edge swipe fights the cube.</span>
+            <button
+              className="install-note__dismiss"
+              aria-label="Dismiss"
+              onClick={() => {
+                setNoticeDismissed(true);
+                try {
+                  window.localStorage.setItem(INSTALL_NOTICE_KEY, '1');
+                } catch {
+                  // Nothing to remember it with; it will simply appear again.
+                }
+              }}
+            >
+              ×
+            </button>
           </div>
         )}
       </div>
