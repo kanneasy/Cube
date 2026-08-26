@@ -41,6 +41,9 @@ interface CubieRef {
   coords: Vec3;
 }
 
+/** What a covered cube shows: its own plastic, lifted just enough to keep the grid. */
+const CONCEALED_COLOR = new THREE.Color(BODY_COLOR).multiplyScalar(1.9);
+
 const AXIS_VECTORS = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
 
 export class CubeRenderer {
@@ -58,6 +61,7 @@ export class CubeRenderer {
 
   private liveBase: TurnBase | null = null;
   private liveAngle = 0;
+  private concealed = false;
 
   private frameHandle = 0;
 
@@ -237,6 +241,19 @@ export class CubeRenderer {
     this.liveAngle = radians;
   }
 
+  /**
+   * Hide what the cube is showing without hiding the cube.
+   *
+   * Competition inspection begins when the scramble is REVEALED, so before that the
+   * scramble must genuinely not be readable -- a label over a fully-coloured cube
+   * defeats the only thing covering it is for. Every sticker renders in the body
+   * colour, so the object, its silhouette and its grid all stay, and only the
+   * information goes.
+   */
+  setConcealed(concealed: boolean): void {
+    this.concealed = concealed;
+  }
+
   setOrbit(yaw: number, pitch: number): void {
     this.yaw = yaw;
     this.pitch = THREE.MathUtils.clamp(pitch, -PITCH_CLAMP, PITCH_CLAMP);
@@ -390,7 +407,7 @@ export class CubeRenderer {
             w.toward * SHADE.toward +
             w.away * SHADE.away) /
           total;
-        sticker.material.color.copy(sticker.base).multiplyScalar(shade);
+        sticker.material.color.copy(this.concealed ? CONCEALED_COLOR : sticker.base).multiplyScalar(shade);
       }
     }
   }

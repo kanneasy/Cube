@@ -130,6 +130,7 @@ export function App() {
     rendererRef.current?.setPalette(PALETTES[paletteId]);
   }, [paletteId]);
 
+
   useEffect(() => {
     audioRef.current.setEnabled(soundOn);
   }, [soundOn]);
@@ -139,6 +140,12 @@ export function App() {
   const running = phase === 'solving';
   const inspecting = phase === 'inspecting' || phase === 'holding';
   const finished = phase === 'finished';
+
+  // A covered scramble must actually be unreadable. Inspection is timed from the
+  // reveal, so seeing the cube beforehand is the one thing this mode cannot allow.
+  useEffect(() => {
+    rendererRef.current?.setConcealed(phase === 'covered');
+  }, [phase]);
 
   // Drive the clock only while something is actually counting, so an idle app is not
   // re-rendering sixty times a second on a phone.
@@ -283,7 +290,7 @@ export function App() {
               NEXT SCRAMBLE
             </button>
           )}
-          {!installed && !noticeDismissed && (
+          {!installed && !noticeDismissed && !inspecting && (
             <div className="install-note">
               <span>Add to your home screen. In a Safari tab, the edge swipe fights the cube.</span>
               <button

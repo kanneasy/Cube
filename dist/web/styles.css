@@ -177,9 +177,12 @@ button {
 }
 
 /* The scope limit stated affirmatively rather than buried. */
+/* Ink 56, not Ink 32. These are the app's honesty admissions -- the last text in the
+   product that should be hard to read -- and ink-32 measures 2.7:1 on the void, under
+   the 3:1 floor. See colors.md, "Correction: scope tags sit at ink-56". */
 .split__scope {
   font-size: var(--type-size-micro);
-  color: var(--color-ink-32);
+  color: var(--color-ink-56);
 }
 
 .split__value {
@@ -238,7 +241,7 @@ button {
   font-size: var(--type-size-micro);
   font-weight: var(--type-weight-label);
   letter-spacing: 0.14em;
-  color: var(--color-ink-32);
+  color: var(--color-ink-56);
   margin-right: var(--space-8);
 }
 
@@ -318,7 +321,7 @@ button {
   font-size: var(--type-size-micro);
   font-weight: var(--type-weight-label);
   letter-spacing: 0.14em;
-  color: var(--color-ink-32);
+  color: var(--color-ink-56);
 }
 
 /* Sits beside Undo because Undo is what changes it. Putting it under the timer would
@@ -519,7 +522,7 @@ button {
   font-size: var(--type-size-micro);
   font-weight: var(--type-weight-label);
   letter-spacing: 0.14em;
-  color: var(--color-ink-32);
+  color: var(--color-ink-56);
 }
 
 /* ---- install note ---- */
@@ -637,6 +640,18 @@ button {
 
 .board__row:last-child {
   border-bottom: none;
+}
+
+/* The one row whose whole job is to be unmistakable. Per visual.md: a 3px pure-white
+   bar down the full row height, and the value in pure white -- rank position alone
+   makes it a thing you have to recall rather than recognise. */
+.board__row[data-best='true'] {
+  box-shadow: inset 3px 0 0 0 var(--color-ink);
+  padding-left: var(--space-12);
+}
+
+.board__row[data-best='true'] .board__value {
+  color: var(--color-ink);
 }
 
 .board__rank {

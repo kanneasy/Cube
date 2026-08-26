@@ -42,7 +42,7 @@ function Board({ title, rows, empty }: { title: string; rows: string[]; empty: s
       ) : (
         <ol className="board__list">
           {rows.map((row, i) => (
-            <li key={i} className="board__row">
+            <li key={i} className="board__row" data-best={i === 0}>
               <span className="board__rank">{i + 1}</span>
               <span className="board__value">{row}</span>
             </li>

@@ -175,3 +175,22 @@ zero-luminance background; on a white surface every one of them would need re-de
 the luminance-band argument above inverts. The app sets `color-scheme: dark` and
 `data-theme="dark"` unconditionally. The token file carries identical values in both the
 light and dark slots so an accidental light render is still correct rather than broken.
+
+
+## Correction: scope tags sit at ink-56, not ink-32
+
+Set 2026-08-26, after the design critique measured the built screen.
+
+This file reserves Ink 32 for text that "must be *seen to exist*" and never for text
+that must be read, and that rule is right. The scope tags were rendering at it: `CFOP`
+under a split, `PRACTICE` under the hint button, `NOT WCA` under an average. Measured
+2.7:1 on the void, below the 3:1 floor even for large text.
+
+The size correction in typography.md already argued the opposite case for these exact
+strings -- that they are the app's honesty admissions and so the last text in the
+product that should be hard to read -- and then fixed only the size. The colour half
+was left undone, which is how a half-finished fix looks: defensible in each file and
+wrong where the two meet.
+
+Scope tags now use Ink 56 (`#878D96`, 6.3:1). Ink 32 keeps its stated job: disabled
+controls, and nothing that carries meaning.
