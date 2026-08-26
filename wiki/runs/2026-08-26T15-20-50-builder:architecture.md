@@ -1,0 +1,132 @@
+# Run — builder:architecture — 2026-08-26T15:20:50.317Z
+
+Captured verbatim by the SubagentStop hook: the handoff Builder sent, and the agent's complete output (its `## Thinking` and `## Result`).
+
+## Handoff
+
+**Scope the cube app concept**
+
+Scope this concept. This is a brand-new app at intake — there is no `src/` and no `dist/` yet, so the whole brief is below. I need your technical read before I write the plan the user approves.
+
+## The idea, in the user's own words
+
+"I want to build a 3x3x3 Rubik's cube game for my iPhone. I should be able to swipe space around the cube to rotate it, swipe a face to make a move, count time from the first move and stop time when solved, count moves, be able to undo as many moves as I've made one at a time, and keep a record of the top 5 fastest solves and top 5 fewest moves. Suggest any other features to make this fun and optimal."
+
+I have already told the user Builder builds web apps, not native iOS — so this is a WebGL cube in a home-screen-installed PWA, and I told them iOS Safari has no Vibration API so there is no haptic turn click. They accepted that and did not take the offer to discuss a native path.
+
+## v1 draft, capability by capability
+
+1. **A 3D 3x3x3 cube rendered in WebGL**, full-screen on an iPhone, flat/modern art direction — pure saturated faces, no gloss, hard edges, dark surface, legibility at speed prioritized over realism.
+
+2. **Drag-follow turning.** The user press a sticker and drags; that layer rotates live under the finger and releases into the nearest quarter turn. Slow drags follow the finger, a fast flick fires the turn immediately. They explicitly chose this over discrete flick-and-snap, so real-time hit-testing on the 3D surface plus a snap-with-momentum release is a requirement, not a nice-to-have.
+
+3. **Orbit for hidden faces.** A drag on the background spins the whole cube. They chose this over edge-drag-reaches-behind and over a notation button pad — so there is no escape hatch, and the raycast + orbit interaction has to be good enough to carry every back-face turn in every solve.
+
+4. **Timer, two modes.**
+   - *Casual (default):* competition-legal random-state scramble, clock starts on the first move, stops on solve. No inspection, no ceremony.
+   - *Speedcubing:* real WCA rules — 15s inspection, hold-to-start release, +2 and DNF penalties, rolling average-of-5 and average-of-12.
+   Note they want the **random-state scramble in both modes** — the scramble engine is competition-grade regardless of mode.
+
+5. **Move counter with undo.** Undo any number of moves, one at a time. Their rule: **undo decrements the move count, and the clock keeps running uninterrupted.** So the move count always equals the length of the user's actual final solution, and time is the only cost of backtracking.
+
+6. **Records, local to the device.** Top 5 fastest solves, top 5 fewest moves.
+
+7. **Hint the next move.** A hint computes an optimal (or near-optimal) solution from the *current* cube state and reveals only the next turn. A solve that used a hint is flagged practice and cannot set a record.
+
+8. **Daily scramble.** One fixed scramble per day with its own small board of that day's attempts.
+
+9. **Pattern challenges.** Alternate goal states — checkerboard, cube in a cube, superflip — with their own move records.
+
+10. **Stage splits.** Automatic cross / F2L / OLL / PLL times detected inside each solve.
+
+11. Included without asking: live move-notation readout, turn sound (standing in for the absent haptics), a colorblind-safe sticker palette option, full solve history.
+
+## What I need back
+
+**Feasibility, capability by capability** — flag anything that cannot work the way it is described above as a web app / PWA, and give me the honest version of what v1 does instead. In particular I want your read on:
+
+- **The solver.** Capabilities 4 (random-state scramble) and 7 (hint) both need one, which looks like convergence in our favor — one engine, two uses. But I do not want to promise it before you have costed it. What does a two-phase (Kociemba-style) solver actually cost in a browser: pruning-table size, whether tables can be precomputed and shipped as an asset versus built on device at first run, how long a cold start takes on an iPhone, whether it runs in a Worker without janking a 60fps render, and what the realistic solution length and solve latency is for a mid-solve hint. If shipping precomputed tables blows up the bundle, say so and tell me what the cheaper honest option is.
+- **Stage splits (capability 10).** This one I suspect is the most expensive thing on the list and the user picked it. Detecting cross / F2L / OLL / PLL boundaries requires recognizing cube state mid-solve, and F2L in particular is not a single crisp predicate. Is this real, is it reliable, and what does it degrade to if it is not?
+- **Drag-follow on iOS Safari (capabilities 2 and 3).** Raycasting to a sticker on every touchmove while animating a layer, at 60fps, on a phone. Any pitfalls here I should have in the plan — and the iOS-specific ones I half-know about and want confirmed: rubber-band scroll and pull-to-refresh firing during a drag, gesture conflicts with Safari's own edge swipes, safe-area insets in standalone mode, and whether any of this materially differs once installed to the home screen.
+- **The data layer, and whether this app needs a server at all.** Our backend convention is a Hono method API with Drizzle over PGlite locally and Supabase in production. This app is single-player, offline-first, on one phone, storing solve records and a daily-scramble history — all of it local. Tell me straight whether the convention earns its place here or whether this should be a pure static PWA with IndexedDB, and what we give up either way (the user has said nothing about wanting records synced across devices, and I have not raised it).
+- **Every account, key, and recurring cost v1 implies**, with the cheaper default named beside the automated or paid option. This fills the "Setup you'll need" section of the plan and I am writing that section from your return, not from memory. Include how the user actually gets this onto their iPhone home screen and what hosting that implies.
+
+Cost the capabilities — do not redesign the MVP. Every cut here is the user's call and they made these choices form by form, so tell me what each thing costs and where the risk is, and let me carry that to them.
+
+## Agent output
+
+## Thinking
+
+This is an intake-draft scope call — no `src/`, no `dist/`, so I'm grounding in the handoff itself plus the kit's canvas/frontend/ship pitfalls (three.js sizing and drag-mutation timing, iOS touch/PWA gestures, service-worker and IndexedDB gotchas) rather than any project code. I also ran two targeted searches to cost the solver claim rather than guess from memory: `min2phase`/Kociemba two-phase implementations in JS, and `cubing.js`'s WCA-regulation random-state scramble module, since that's the one number (table size, cold-start time, worker-friendliness) the whole plan hinges on.
+
+Findings below are organized around the five questions asked, then the required capability-by-capability feasibility pass, then setup/cost, then the compressed touches/migration/debt/tests lines the intake-draft format calls for. No MVP redesign — costing only, per the brief's instruction.
+
+## Result
+
+### The solver — cheaper than the framing implies, not a bundle risk
+
+A two-phase (Kociemba) solver is the right convergence call, and it's a solved problem, not R&D: the `min2phase`/`cubejs` family is what every serious web cube timer (csTimer, cuberoot, alg.cubing.net) already runs, and `cubing.js`'s scramble module wraps the same lineage for WCA-regulation random-state scrambles. Real numbers:
+
+- **Tables are ~2MB and built at runtime, not shipped as an asset.** There's no precomputed blob to bundle and no bundle-size tradeoff to make — the "shipping tables blows up the bundle" branch doesn't apply.
+- **Cold-start (table build) is ~2 seconds**, one time per session. That's the cost to hide, not the tables themselves.
+- **Per-solve latency is ~10-100ms** on a phone once tables are built — comfortably below anything the user would notice, whether it's generating a scramble or answering a mid-solve hint request.
+- **It runs in a Worker by default** in the existing libraries, so it never competes with the 60fps render thread. Do the 2s init inside a Worker on app open (or lazily before the first scramble/hint), and gate nothing visible on it — mount and render the cube immediately; this is the exact "heavy synchronous mount" footgun in `canvas.md` if the init is allowed to block first paint instead.
+
+One engine, two call sites, both cheap. Adopt an existing library rather than hand-rolling — a from-scratch two-phase solver is a multi-week correctness project; integrating one is closer to a day.
+
+### Stage splits — real, but only two of the four boundaries are honest as a default
+
+Cross and "fully solved" are crisp, method-agnostic predicates on cube state (four edges correctly placed/oriented around one center; whole cube matches solved) — cheap to detect, reliable for any solving method. F2L-complete (bottom two layers solved) and OLL-complete (top face one color) are equally crisp *as predicates*, but fragile as *meaningful splits* for two reasons that have nothing to do with compute cost:
+
+1. **Method dependence.** These boundaries assume CFOP. A meaningful slice of intermediate/casual solvers use layer-by-layer, Roux, or ZZ, where "F2L" and "OLL/PLL" as separate phases don't exist the same way (Roux has no F2L or OLL at all) — showing a confident "F2L: 45s" to someone doing Roux is not a rounding error, it's a wrong stat presented as a fact.
+2. **Undo interacts badly with naive "first time true" detection.** With undo in the mix (a stated requirement), a predicate can become transiently, incidentally true mid-solve (cross edges land right by coincidence while working on something else) and then get disrupted again — a naive detector timestamps the *first* satisfaction, understating the real split and potentially going non-monotonic.
+
+Honest read: this is real, and the compute is trivial (checking a boolean after each move, no solver needed) — the actual cost is the guard logic (track only the *last* stable, undo-consistent satisfaction of each predicate) plus test coverage for the undo-during-cross and non-CFOP cases. My recommendation: ship all four, but label F2L/OLL/PLL as CFOP-oriented/best-effort in the UI copy rather than presenting them with the same confidence as cross/overall — that keeps the feature the user asked for while not lying to a Roux solver. Worth a line in the plan so the user is choosing this, not discovering it later.
+
+### Drag-follow + orbit on iOS Safari — doable, with known fixes, and one framing correction
+
+The interaction choice (no notation pad, no escape hatch) is fine technically; the raycast-hit-vs-miss on touchstart cleanly disambiguates "grabbed a sticker" (turn) from "grabbed the background" (orbit), and a 26-cubie mesh is trivial polycount — this is not a performance risk on any iPhone in shipping range.
+
+One implementation correction that lowers cost: the framing says "real-time hit-testing on the 3D surface" as a requirement — the *feel* (live rotation under the finger, momentum-snap release) is the requirement, but re-raycasting the mesh on every `touchmove` is not how this is normally built and is unnecessary work. Standard approach: raycast once at `touchstart` to identify the grabbed sticker/layer/axis, then drive the rest of the gesture off the 2D screen-space drag delta, computing the release snap from velocity. Cheaper and it's what `alg.cubing.net`/similar tools do.
+
+Confirmed pitfalls to build against from day one (all in `~/builder/.claude/knowledge/pitfalls/canvas.md` and `pitfalls/frontend.md`):
+- **Mutate the layer rotation synchronously inside the touchmove handler; only the redraw may be rAF-throttled.** Batching the state mutation itself into the render loop lets `pointerup` commit before the next frame, silently reverting the just-completed drag — this is a named, previously-seen bug, not a hypothetical.
+- **Rubber-band bounce and pull-to-refresh**: since this app has no scrollable content at all (full-bleed canvas), the fix is simpler than the general case — lock the whole page (`touch-action: none` on `html, body`, `overscroll-behavior: none`, fixed-position body), no reconciliation with real scroll content needed.
+- **Safari's edge-swipe-back and URL-bar chrome genuinely conflict with this app in a plain browser tab**, and that conflict **disappears once installed to the home screen** (standalone mode has no browser chrome to swipe). This isn't cosmetic — it's the difference between "the drag gestures fight the browser" and "they don't." Worth setting the user's expectations explicitly: test and judge this app only after Add to Home Screen, not in a Safari tab.
+- **Safe-area insets** (`viewport-fit=cover`, `env(safe-area-inset-*)`): pad the timer/counter/button chrome away from the notch and home indicator; let the cube canvas itself run full-bleed for maximum drag surface.
+
+### Data layer — this app doesn't earn the backend convention; go pure static PWA
+
+Single player, one device, no login, no cross-device sync requested, and no server-side logic exists anywhere in this app (scrambling and solving both run client-side in a Worker). The Hono + Drizzle + PGlite/Supabase convention buys you multi-device sync, server-authoritative logic, and auth — none of which this app uses. Running it anyway means a local server process, a network hop for every solve-record write, and schema/migration ceremony for a handful of simple local tables, for zero benefit.
+
+Recommendation: pure static PWA, IndexedDB for solve records, settings, and daily-scramble/pattern-challenge history (a thin wrapper like `idb-keyval` or `Dexie`, not raw IndexedDB). What you give up: no cross-device sync (already not wanted) and no server-authoritative record that could later support a shared/friends leaderboard without adding a backend at that point — additive later, not a rewrite, since IndexedDB rows export cleanly. One pitfall that still applies even with no server: **never pin an IndexedDB version you might need to lower** — open with no version, bump from `db.version + 1` only when a store is genuinely missing (`pitfalls/ship.md`) — cheap to get right now, since solve-record history is meant to survive years of app updates.
+
+**Daily scramble note**: as scoped (no accounts, no sync), "daily scramble" is inherently per-device, not a shared global puzzle — generate once per calendar date, cache the moves in IndexedDB, and reuse for repeat attempts that day. No seeded-RNG requirement, no server. If a future "everyone gets the same puzzle" version is wanted, that's a distinct feature needing a server — flag it as out of scope for v1, not a silent gap.
+
+### Setup, accounts, and cost — this is a $0/month app
+
+- **No Apple Developer account, no $99/yr fee.** This ships as a home-screen PWA, not an App Store app — worth stating plainly since the user's original ask was "for my iPhone."
+- **No API keys, no third-party account of any kind.** The scramble/solver libraries are open-source, key-free, client-side.
+- **Hosting: static-only** (Vercel/Netlify free tier, or GitHub Pages) — no database, no serverless function, because there's no backend. Custom domain is optional and the only true recurring cost if chosen (~$10-15/yr); the default subdomain is free and sufficient.
+- **Getting it onto the phone**: Safari → Share → Add to Home Screen, once the site has a valid Web App Manifest (name, icons, `display: standalone`) over HTTPS (free by default on Vercel/Netlify). No review process, no cost.
+- **One real gotcha**: iOS copies the home-screen icon into SpringBoard once, at add-time, and never re-reads it on redeploy — ship the real launch icon *before* telling the user to add it, or a later icon change needs a manual remove-and-re-add (`pitfalls/ship.md`).
+
+### What it touches / migration / debt / tests (intake-draft level)
+
+- **What it touches**: not yet, no code exists. At the capability level: a three.js scene + touch-gesture layer, a Worker-hosted two-phase solver used for both scrambling and hints, a small state machine for timer/move-count/undo/stage-detection, and an IndexedDB store for records/history/settings. No server, no schema, no auth surface at all.
+- **Migration implications**: none — no server-side schema exists; the only versioned artifact is the client IndexedDB store, opened unpinned per the pitfall above.
+- **Test surface**: cover the solver integration (scramble validity, hint correctness on a mid-solve state), the undo/move-count/timer interaction (undo decrements count, clock never pauses), and the stage-split guard logic specifically for the undo-during-cross and non-CFOP cases named above — that last one is exactly the kind of tricky branch the suite needs to pin down before it ships.
+- **Tech debt**: none yet to flag at intake; the one thing worth building right from the start rather than retrofitting is the IndexedDB open-with-no-version discipline above, since it's free now and costly to unwind on a live device later.
+
+### Effort & risk
+
+Feasible end-to-end as a web PWA, no capability requires native code. The solver, scrambling, timer, undo, and records are all standard, low-risk engineering (existing libraries, well-trodden patterns). The two places real risk concentrates: (1) getting the drag-turn feel right on real iOS hardware — not because it's infeasible, but because "feels great" gesture tuning is inherently iterative and best judged installed-to-home-screen, not in a browser tab; and (2) the stage-split honesty question above, which is a product-labeling decision as much as an engineering one. Total recurring cost as scoped: $0/month, no accounts.
+
+Files consulted: `~/builder/.claude/knowledge/coding-pitfalls.md`, `~/builder/.claude/knowledge/pitfalls/canvas.md`, `~/builder/.claude/knowledge/pitfalls/frontend.md`, `~/builder/.claude/knowledge/pitfalls/ship.md`.
+
+Sources: [min2phase.js](https://github.com/cubing/min2phase.js), [cs0x7f/min2phase](https://github.com/cs0x7f/min2phase), [SpeedSolving: pure JS random-state solvers](https://www.speedsolving.com/threads/pure-javascript-solvers-for-random-state-3x3-scrambles.66772/), [cubing.js scramble module](https://js.cubing.net/cubing/scramble/), [cubing.js API reference](https://js.cubing.net/cubing/api/), [cubejs (ldez)](https://github.com/ldez/cubejs)
+
+agentId: a5181e8c89aa0880a (use SendMessage with to: 'a5181e8c89aa0880a', summary: '<5-10 word recap>' to continue this agent)
+<usage>subagent_tokens: 65806
+tool_uses: 7
+duration_ms: 271498</usage>

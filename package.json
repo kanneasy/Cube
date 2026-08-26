@@ -1,34 +1,25 @@
 {
-  "name": "Quarter Turn",
+  "name": "quarter-turn",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=20.19"
   },
   "scripts": {
-    "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
-    "dev:api": "DEV_SERVER=1 tsx watch dist/server/index.ts",
-    "dev:web": "vite",
-    "build": "npm run test && npm run build:web",
-    "build:web": "vite build",
+    "dev": "vite",
+    "build": "npm run test && npm run typecheck && vite build",
+    "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "ds:previews": "tsx dist/scripts/build-ds-previews.tsx",
-    "db:generate": "drizzle-kit generate",
-    "migrate": "tsx dist/scripts/migrate.ts",
-    "scenario": "tsx dist/scripts/run-scenario.ts",
-    "method": "tsx dist/scripts/run-method.ts",
-    "db": "tsx dist/scripts/query.ts"
+    "typecheck": "tsc --noEmit",
+    "ds:previews": "tsx dist/scripts/build-ds-previews.tsx"
   },
   "dependencies": {
-    "@electric-sql/pglite": "^0.5.3",
-    "@hono/node-server": "^1.13.7",
-    "drizzle-orm": "^0.38.3",
-    "hono": "^4.6.15",
-    "postgres": "^3.4.9",
+    "cubing": "^0.63.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "three": "^0.181.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
@@ -37,14 +28,15 @@
     "@types/node": "^22.10.5",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
+    "@types/three": "^0.181.0",
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/coverage-v8": "^3.2.6",
-    "concurrently": "^9.1.2",
-    "drizzle-kit": "^0.31.10",
+    "fake-indexeddb": "^6.2.2",
     "jsdom": "^29.1.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
+    "vite-plugin-pwa": "^1.0.3",
     "vitest": "^3.2.6"
   }
 }

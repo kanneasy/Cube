@@ -1,5 +1,9 @@
-import { run as hello } from './hello';
+// Scenario registry.
+//
+// This app has no database, so a scenario is not a seed script — it is a named,
+// deterministic fixture: a cube state, a move log, a solve history. Tests import
+// them directly, and the dev app can load one via `?scenario=<name>` so a screen
+// can be inspected in a known state without solving a cube by hand first.
+export const scenarios = {} as const;
 
-// The scenario registry. The build skill adds new scenarios here so they can be
-// run by name via `npm run scenario <name>`.
-export const scenarios = { hello };
+export type ScenarioName = keyof typeof scenarios;
