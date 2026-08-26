@@ -1,2 +1,0 @@
-# Vite publicDir for this app (vite.config.ts sets root: dist/web).
-# Generated brand assets from bin/gen-image.mjs land here so they survive a production build.
