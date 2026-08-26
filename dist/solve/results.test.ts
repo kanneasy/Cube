@@ -21,6 +21,8 @@ describe('inspection penalties (A4d1, A4d2)', () => {
     expect(inspectionPenalty(14_999)).toBe('none');
   });
 
+  // Scenario: "Starting the solve at 15.00 seconds or later into inspection applies
+  // a +2 penalty" (@tests, story 3).
   it('penalises exactly 15.00 seconds', () => {
     // A4d1+ makes the boundary land against the competitor rather than for them.
     expect(inspectionPenalty(15_000)).toBe('plus2');
@@ -30,6 +32,8 @@ describe('inspection penalties (A4d1, A4d2)', () => {
     expect(inspectionPenalty(16_999)).toBe('plus2');
   });
 
+  // Scenario: "Starting the solve at 17.00 seconds or later into inspection results
+  // in a DNF" (@tests, story 3).
   it('DNFs at exactly 17.00 seconds and beyond', () => {
     expect(inspectionPenalty(17_000)).toBe('dnf');
     expect(inspectionPenalty(30_000)).toBe('dnf');
@@ -37,6 +41,8 @@ describe('inspection penalties (A4d1, A4d2)', () => {
 });
 
 describe('precision (9f1, 9f2)', () => {
+  // Scenario: "A single result displays truncated to hundredths, never rounded"
+  // (@tests, story 3).
   it('truncates a single rather than rounding it', () => {
     // The regulation's own example: 12.678 is recorded as 12.67, not 12.68.
     expect(truncateSingle(12_678)).toBe(12_670);
@@ -83,6 +89,8 @@ describe('average of 5 (9f8, 9f9)', () => {
     expect(a).toEqual({ kind: 'time', ms: 14_000 }); // 12 + 14 + 16, the 10 is the best
   });
 
+  // Scenario: "Average of 5 and average of 12 compute as trimmed means and go DNF
+  // only when 2 or more DNFs are present in that window" (@tests, story 3).
   it('is a DNF once two results are DNFs', () => {
     // Counted first. Sort-and-drop reasoning gets the single-DNF case right and this
     // one wrong, which is exactly why 9f9 is written as a count.

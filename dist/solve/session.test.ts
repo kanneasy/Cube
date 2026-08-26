@@ -118,6 +118,8 @@ describe('competition mode', () => {
 });
 
 describe('moves and undo', () => {
+  // Scenario: "A slice-style drag charges two moves toward the counter, matching
+  // Outer Block Turn Metric" (@tests, story 4).
   it('counts a face turn as one and a slice as two, per OBTM', () => {
     let s = reduce(casual(), turn('R', 1_000));
     expect(s.moveCount).toBe(1);
@@ -151,6 +153,8 @@ describe('moves and undo', () => {
     expect(s.moveCount).toBe(0);
   });
 
+  // Scenario: "Undo can be repeated back to the first move of the solve, and is a
+  // no-op at zero moves" (@tests, story 4).
   it('can be repeated back to the first move, and is a no-op at zero', () => {
     let s = casual();
     parseAlg("R U F L").forEach((move, i) => {

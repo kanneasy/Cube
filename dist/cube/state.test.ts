@@ -198,6 +198,8 @@ describe('agreement with the reference solver', () => {
     expect(isSolved(applyMoves(mine, parseAlg(solution)))).toBe(true);
   }, 30_000);
 
+  // Scenario: "A new casual scramble is random-state and at least two moves from
+  // solved" (@tests, story 2).
   it('generates scrambles that are face turns only, and never trivially short', async () => {
     const scramble = (await randomScrambleForEvent('333')).toString();
     const moves = parseAlg(scramble);

@@ -32,6 +32,9 @@ describe('stage splits on a CFOP solve', () => {
     expect(splits.shape === 'cfop' && splits.crossColor).toBe('D');
   });
 
+  // Scenario: "The cross face is inferred from whichever color yields a properly
+  // ordered CFOP shape with the earliest cross, not assumed to be white" (@tests,
+  // story 9).
   it('picks the colour whose cross completes earliest, not merely a valid one', () => {
     // Proving inference RAN is weaker than proving it CHOSE. Several faces can have a
     // complete cross by the end of a solve -- a solved cube has six -- so the
@@ -84,6 +87,8 @@ describe('why the scan runs forward', () => {
     expect(f2lAt(SOLVED_END)).toBe(true); // and it is closed again by the end
   });
 
+  // Scenario: "Cross completion is detected at its real boundary, not pushed into the
+  // last-layer algorithm that temporarily breaks it" (@tests, story 9).
   it('still reports F2L at its real completion, not inside the last layer', () => {
     const splits = computeStageSplits(scrambleFor(), logOf());
     expect(splits.shape === 'cfop' && splits.f2l.moveIndex).toBe(F2L_END);
@@ -114,6 +119,9 @@ describe('predicates', () => {
 });
 
 describe('solves that are not CFOP-shaped', () => {
+  // Scenario: "A solve that doesn't progress in CFOP shape is reported as
+  // unrecognised with no stage times at all, rather than a partial set of confident
+  // wrong ones" (@tests, story 9).
   it('reports unrecognised rather than a wrong number when stages coincide', () => {
     // One move from solved: every stage completes on the same move, so there are no
     // distinct phases to report. A Roux or blockbuilding solve fails the same check.
@@ -128,5 +136,43 @@ describe('solves that are not CFOP-shaped', () => {
 
   it('reports unrecognised for an empty log', () => {
     expect(computeStageSplits(solvedCube(), []).shape).toBe('unrecognised');
+  });
+});
+
+describe('undo and the splits', () => {
+  // Scenario: "Undo before a stage boundary correctly removes that stage's recorded
+  // split" (@tests, story 9). Splits are computed from the log the solve ended on, so
+  // a detour that was taken back must leave no trace at all -- not a shifted boundary,
+  // not a phantom stage.
+  it('scores the path actually ended on, not the moves that were tried', () => {
+    const clean = computeStageSplits(scrambleFor(), logOf());
+
+    // Insert a detour partway through the cross and take it back, one move at a time.
+    const detour = parseAlg("B U' F2");
+    const withDetour: LoggedMove[] = [];
+    let t = 0;
+    SOLVE.forEach((move, i) => {
+      withDetour.push({ move, atMs: (t += 100) });
+      if (i === 1) {
+        // Wander off, then undo every one of them: the log is rewritten, so what
+        // reaches the scan is the clean path with time having passed.
+        for (const d of detour) withDetour.push({ move: d, atMs: (t += 100) });
+        for (let k = 0; k < detour.length; k++) withDetour.pop();
+      }
+    });
+
+    const detoured = computeStageSplits(scrambleFor(), withDetour);
+    expect(detoured.shape).toBe('cfop');
+    expect(detoured.shape === 'cfop' && detoured.crossColor).toBe(clean.shape === 'cfop' && clean.crossColor);
+    expect(detoured.shape === 'cfop' && detoured.cross.moveIndex).toBe(CROSS_END);
+    expect(detoured.shape === 'cfop' && detoured.f2l.moveIndex).toBe(F2L_END);
+    expect(detoured.shape === 'cfop' && detoured.oll.moveIndex).toBe(OLL_END);
+  });
+
+  it('reports no splits at all when undo leaves the cube unsolved', () => {
+    // Undoing back past the end means the solve never finished, and an unfinished
+    // solve has no stages to report.
+    const partial = logOf(SOLVE.slice(0, SOLVE.length - 3));
+    expect(computeStageSplits(scrambleFor(), partial).shape).toBe('unrecognised');
   });
 });

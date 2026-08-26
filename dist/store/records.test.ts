@@ -58,6 +58,9 @@ describe('fastest board', () => {
     expect(fastestBoard([fast, clean]).map((s) => s.id)).toEqual([clean.id, fast.id]);
   });
 
+  // Scenario: "A hinted or DNF solve never enters either record board" (@tests,
+  // story 5) and "A practice-marked solve is excluded from both record boards and
+  // from the averages" (@tests, story 6).
   it('keeps hinted and DNF solves off the board', () => {
     const good = solve({ rawMs: 40_000 });
     const board = fastestBoard([solve({ rawMs: 1_000, hinted: true }), solve({ rawMs: 2_000, penalty: 'dnf' }), good]);

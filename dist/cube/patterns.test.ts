@@ -46,6 +46,8 @@ describe('patterns', () => {
   // the algorithm string is. Each pattern instead gets an independent structural check
   // that a mistyped move would break.
 
+  // Scenario: "Selecting a pattern sets the cube to that pattern's exact target
+  // arrangement" (@tests, story 8).
   it('checkerboard shows every face as an alternating checker of an opposite pair', () => {
     const s = patternTarget('checkerboard');
     for (const face of FACES) {
