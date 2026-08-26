@@ -14,6 +14,7 @@ import type { StageSplits } from '../solve/stages';
 import { HoldZone } from './components/HoldZone';
 import { Inspection } from './components/Inspection';
 import { MenuSheet } from './components/MenuSheet';
+import { UpdatePrompt } from './components/UpdatePrompt';
 
 function splitTime(text: string): [string, string] {
   const i = text.lastIndexOf('.');
@@ -329,6 +330,8 @@ export function App() {
           <span className="hint-token__scope">SOLVER&rsquo;S ROUTE</span>
         </div>
       )}
+
+      <UpdatePrompt />
 
       {menuOpen && (
         <MenuSheet
