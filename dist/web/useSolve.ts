@@ -20,6 +20,8 @@ export interface SolveController {
   hintPending: boolean;
   dispatch: (action: Action) => void;
   newScramble: (options?: { mode?: TimerMode; goal?: Goal }) => void;
+  /** Start on a scramble that already exists: today's daily, or a pattern's blank cube. */
+  startWith: (options: { scramble: string; goal: Goal; mode: TimerMode }) => void;
   requestHint: () => void;
 }
 
@@ -98,6 +100,17 @@ export function useSolve(
     [announceRefusal, rendererRef],
   );
 
+  const startWith = useCallback(
+    ({ scramble, goal, mode }: { scramble: string; goal: Goal; mode: TimerMode }) => {
+      setRefusal(null);
+      setScrambling(false);
+      sessionRef.current = startSession({ mode, goal, scramble });
+      rendererRef.current?.setState(sessionRef.current.cube);
+      force();
+    },
+    [rendererRef],
+  );
+
   const requestHint = useCallback(() => {
     const session = sessionRef.current;
     if (session.phase.kind === 'finished' || hintPending) return;
@@ -122,6 +135,7 @@ export function useSolve(
     hintPending,
     dispatch,
     newScramble,
+    startWith,
     requestHint,
   };
 }

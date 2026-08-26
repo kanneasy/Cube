@@ -343,3 +343,375 @@ button {
 .controls__spacer {
   flex: 1;
 }
+
+/* ---- inspection ---- */
+
+/* Every threshold is an inversion or a fill, never a colour change alone, so the state
+   survives both a colourblind viewer and a half-second glance. */
+.inspection {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+}
+
+.inspection__number {
+  font-family: var(--type-family-display);
+  font-size: var(--type-size-timer);
+  font-weight: 800;
+  line-height: var(--type-leading-timer);
+  letter-spacing: var(--type-tracking-timer);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-56);
+  padding-inline: 6px;
+  transition:
+    color 120ms linear,
+    background-color 120ms linear;
+}
+
+.inspection[data-state='first'] .inspection__number,
+.inspection[data-state='second'] .inspection__number {
+  color: var(--color-ink);
+}
+
+.inspection[data-state='second'] .inspection__number {
+  box-shadow: inset 0 -2px 0 0 var(--color-ink);
+}
+
+.inspection[data-state='plus2'] .inspection__number {
+  background: var(--color-ink);
+  color: var(--color-void);
+}
+
+.inspection[data-state='dnf'] .inspection__number {
+  background: var(--color-alarm);
+  color: var(--color-void);
+}
+
+.inspection__tag {
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.12em;
+  color: var(--color-alarm);
+}
+
+/* ---- hold zone: a literal quote of a Stackmat ---- */
+
+.hold {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--size-hold-zone);
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--color-void);
+  border-top: 1px solid var(--color-line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  animation: hold-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  touch-action: none;
+}
+
+@keyframes hold-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+.hold__pad {
+  width: var(--size-hold-disc);
+  height: var(--size-hold-disc);
+  border-radius: 50%;
+  border: 1px solid var(--color-line-strong);
+  background: transparent;
+  transition: background-color 180ms ease-out;
+}
+
+.hold__pad[data-down='true'] {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* The green light, rendered pure white: green is a sticker colour and no hue in the
+   chrome may compete with the puzzle. The compensation is that it is the brightest
+   thing on the screen. */
+.hold__pad[data-both='true'] {
+  background: var(--color-ink);
+}
+
+.hold__rule {
+  position: absolute;
+  width: 40px;
+  height: 2px;
+  background: var(--color-ink);
+  opacity: 0;
+  transition: opacity 180ms ease-out;
+}
+
+.hold__rule[data-both='true'] {
+  opacity: 1;
+}
+
+/* ---- stage overlays ---- */
+
+.reveal,
+.again {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: var(--space-16) var(--space-24);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-void);
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.12em;
+  color: var(--color-ink);
+}
+
+.again {
+  top: auto;
+  bottom: var(--space-16);
+  transform: translateX(-50%);
+}
+
+/* ---- hint token ---- */
+
+.hint-token {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom) + 96px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: var(--space-12) var(--space-16);
+  background: var(--color-graphite);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-control);
+}
+
+.hint-token__move {
+  font-family: var(--type-family-mono);
+  font-size: var(--type-size-metric);
+  color: var(--color-ink);
+}
+
+.hint-token__scope {
+  font-size: var(--type-size-micro);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.14em;
+  color: var(--color-ink-32);
+}
+
+/* ---- install note ---- */
+
+/* Sits inside the stage, near its foot. Anywhere in the fixed grid's own rows would
+   overlap the readout, and the timer is the one thing on this screen that must never
+   be covered. */
+.install-note {
+  position: absolute;
+  left: var(--space-16);
+  right: var(--space-16);
+  bottom: var(--space-12);
+  padding: var(--space-8) var(--space-12);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  background: var(--color-graphite);
+  font-size: var(--type-size-micro);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.1em;
+  color: var(--color-ink-56);
+  text-align: center;
+}
+
+/* ---- sheet ---- */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  background: var(--color-slate);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  /* The only box-shadow in the product: the scrim a sheet casts over the stage. */
+  box-shadow: 0 -24px 48px rgba(0, 0, 0, 0.65);
+  display: flex;
+  flex-direction: column;
+  animation: sheet-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(2%);
+    opacity: 0;
+  }
+}
+
+.sheet__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(env(safe-area-inset-top) + var(--space-16)) var(--space-gutter) var(--space-16);
+  border-bottom: 1px solid var(--color-line);
+}
+
+.sheet__title {
+  margin: 0;
+  font-size: var(--type-size-title);
+  font-weight: var(--type-weight-title);
+  letter-spacing: 0.1em;
+  color: var(--color-ink);
+}
+
+.sheet__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding: var(--space-24) var(--space-gutter) calc(env(safe-area-inset-bottom) + var(--space-32));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-32);
+}
+
+.board__title {
+  margin: 0 0 var(--space-12);
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.14em;
+  color: var(--color-ink-56);
+}
+
+.board__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.board__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: 40px;
+  border-bottom: 1px solid var(--color-line-faint);
+}
+
+.board__row:last-child {
+  border-bottom: none;
+}
+
+.board__rank {
+  font-family: var(--type-family-mono);
+  font-size: var(--type-size-small);
+  color: var(--color-ink-32);
+  width: 16px;
+}
+
+.board__value {
+  font-family: var(--type-family-mono);
+  font-size: var(--type-size-data);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-80);
+}
+
+.board__meta {
+  margin-left: auto;
+  font-size: var(--type-size-micro);
+  letter-spacing: 0.1em;
+  color: var(--color-ink-32);
+}
+
+.board__link {
+  font-size: var(--type-size-data);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.08em;
+  color: var(--color-ink-80);
+  min-height: var(--size-tap-min);
+  display: flex;
+  align-items: center;
+}
+
+.board__empty,
+.board__note {
+  margin: var(--space-8) 0 0;
+  font-size: var(--type-size-small);
+  line-height: var(--type-leading-body);
+  color: var(--color-ink-56);
+}
+
+.board__note {
+  color: var(--color-ink-32);
+}
+
+.stat-row {
+  display: flex;
+  gap: var(--space-32);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stat__label {
+  font-size: var(--type-size-micro);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.14em;
+  color: var(--color-ink-56);
+  display: flex;
+  gap: 5px;
+  align-items: baseline;
+}
+
+.stat__value {
+  font-family: var(--type-family-mono);
+  font-size: var(--type-size-metric);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-80);
+}
+
+.control--wide {
+  width: 100%;
+}
+
+.choices {
+  display: flex;
+  gap: var(--space-12);
+}
+
+.choice {
+  flex: 1;
+  min-height: var(--size-tap-min);
+  padding: var(--space-12);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.1em;
+  color: var(--color-ink-56);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.choice[data-selected='true'] {
+  border-color: var(--color-line-strong);
+  color: var(--color-ink);
+}
+
+.choice__swatches {
+  display: flex;
+  gap: 3px;
+}
+
+.choice__swatch {
+  width: 14px;
+  height: 14px;
+}

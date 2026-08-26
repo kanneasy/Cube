@@ -123,6 +123,28 @@ export class CubeAudio {
   }
 
   /**
+   * The judge's call during inspection: one tone at eight seconds, two at twelve.
+   * Paired with a visual inversion rather than standing alone, so a silenced phone
+   * loses nothing.
+   */
+  call(count: number): void {
+    const ctx = this.context;
+    if (!ctx || !this.enabled) return;
+    for (let i = 0; i < count; i++) {
+      const t = ctx.currentTime + i * 0.09;
+      const osc = ctx.createOscillator();
+      osc.frequency.value = 900;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(dbToGain(-22), t + 0.006);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.07);
+    }
+  }
+
+  /**
    * A refused drag. Deliberately duller and quieter than the clack: it is the sound of
    * something not moving.
    */
