@@ -12,9 +12,23 @@
 
 import { cube3x3x3 } from 'cubing/puzzles';
 import { randomScrambleForEvent } from 'cubing/scramble';
-import { experimentalSolve3x3x3IgnoringCenters } from 'cubing/search';
+import { experimentalSolve3x3x3IgnoringCenters, setSearchDebug } from 'cubing/search';
 import { formatAlg, parseAlg } from '../cube/notation';
 import type { Move } from '../cube/state';
+
+// cubing.js spawns its solver in a Web Worker, and a bundler has to cooperate for that
+// to work. Vite's does not by default: the worker entry ends up importing the app's own
+// entry chunk -- React and three.js included -- and dies on `document is not defined`
+// before it can run, so the app cannot scramble at all. It is invisible in dev, which
+// serves modules unbundled, and only appears in a production build.
+//
+// cubing ships this escape hatch for exactly that situation. It also surfaces the
+// instantiation warnings, so a future failure says so instead of silently never
+// producing a scramble.
+setSearchDebug({
+  prioritizeEsbuildWorkaroundForWorkerInstantiation: true,
+  showWorkerInstantiationWarnings: true,
+});
 
 /**
  * A competition-legal scramble: a uniformly random state, solved, and the solution
