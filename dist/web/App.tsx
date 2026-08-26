@@ -20,6 +20,8 @@ import { UpdatePrompt } from './components/UpdatePrompt';
 /** Remembered so the notice is genuinely one-time rather than shown every launch. */
 const INSTALL_NOTICE_KEY = 'quarter-turn:install-notice-dismissed';
 const FIRST_RUN_KEY = 'quarter-turn:first-run-seen';
+/** Resting-zoom values that shipped as defaults, and so were never a user's choice. */
+const FORMER_DEFAULT_ZOOMS = [0.4];
 
 const readFlag = (key: string): boolean => {
   try {
@@ -143,7 +145,11 @@ export function App() {
     void libraryRef.current
       .readSetting<number>('zoom')
       .then((f) => {
-        if (typeof f === 'number') {
+        // A stored value equal to a former DEFAULT was never a choice -- an earlier
+        // build wrote the zoom on every pointerup, so the default persisted itself and
+        // would outlive any later change to the resting framing. Ignore those; keep
+        // anything a pinch actually produced.
+        if (typeof f === 'number' && !FORMER_DEFAULT_ZOOMS.some((d) => Math.abs(f - d) < 0.005)) {
           renderer.setZoom(f);
           lastSeenZoom = renderer.getZoom();
         }
