@@ -1,0 +1,77 @@
+/* GENERATED from src/interfaces/@brand/tokens.json by bin/build-tokens.mjs — do not edit.
+ * Regenerate after any token change:  node ~/builder/bin/build-tokens.mjs .
+ * Components reference these vars only; raw hex/px values in component code are drift. */
+
+:root {
+  color-scheme: light dark;
+  --color-surface: #fafaf9;
+  --color-raised: #ffffff;
+  --color-ink: #1c1917;
+  --color-muted: #78716c;
+  --color-line: #e7e5e4;
+  --color-accent: #1c1917;
+  --color-on-accent: #ffffff;
+  --color-danger: #b91c1c;
+  --color-focus: #1c1917;
+  --type-family-display: ui-sans-serif, system-ui, sans-serif;
+  --type-family-body: ui-sans-serif, system-ui, sans-serif;
+  --type-family-mono: ui-monospace, SFMono-Regular, monospace;
+  --type-weight-display: 600;
+  --type-weight-body: 400;
+  --type-size-display: clamp(1.75rem, 1.5rem + 1.2vw, 2.25rem);
+  --type-size-title: 1.25rem;
+  --type-size-body: 1rem;
+  --type-size-small: 0.875rem;
+  --type-leading-body: 1.5;
+  --type-leading-display: 1.15;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --radius-control: 8px;
+  --radius-card: 10px;
+  --elevation-card: 0 1px 2px rgba(28, 25, 23, 0.06);
+  --elevation-raised: 0 8px 32px rgba(28, 25, 23, 0.14);
+  --motion-duration-fast: 150ms;
+  --motion-duration-base: 250ms;
+  --motion-easing-settle: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-surface: #151312;
+  --color-raised: #201d1b;
+  --color-ink: #f4f2f0;
+  --color-muted: #a8a29e;
+  --color-line: #37332f;
+  --color-accent: #f4f2f0;
+  --color-on-accent: #151312;
+  --color-danger: #f87171;
+  --color-focus: #f4f2f0;
+  --elevation-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --elevation-raised: 0 8px 32px rgba(0, 0, 0, 0.55);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-surface: #151312;
+    --color-raised: #201d1b;
+    --color-ink: #f4f2f0;
+    --color-muted: #a8a29e;
+    --color-line: #37332f;
+    --color-accent: #f4f2f0;
+    --color-on-accent: #151312;
+    --color-danger: #f87171;
+    --color-focus: #f4f2f0;
+    --elevation-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --elevation-raised: 0 8px 32px rgba(0, 0, 0, 0.55);
+  }
+}

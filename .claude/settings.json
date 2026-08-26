@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "builder": {
+      "source": {
+        "source": "directory",
+        "path": "/Users/erickanney/builder"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "builder@builder": true
+  }
+}

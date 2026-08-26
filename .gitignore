@@ -1,0 +1,17 @@
+node_modules/
+data/
+dist/web/dist/
+dist/web/ui/board/
+.design-sync/
+coverage/
+*.log
+.DS_Store
+.env
+.image-bakeoff/
+.image-check.json
+manifest.json
+.claude/settings.local.json
+.builder/
+.builder-plan.md
+.builder-screenshots/
+.gstack/

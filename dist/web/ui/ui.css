@@ -1,0 +1,154 @@
+/* Builder UI primitives — styled entirely from tokens.css vars.
+ * Raw hex/px values here are drift; add or change tokens instead. */
+
+/* ---------- Button ---------- */
+.ui-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  height: 2.5rem;
+  padding: 0 var(--space-16);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-weight: var(--type-weight-display);
+  font-size: var(--type-size-small);
+  cursor: pointer;
+  transition: transform var(--motion-duration-fast) var(--motion-easing-settle),
+    opacity var(--motion-duration-fast) ease;
+}
+.ui-btn:active:not(:disabled) { transform: translateY(1px); }
+.ui-btn:disabled { cursor: default; opacity: 0.55; }
+.ui-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+.ui-btn--primary { background: var(--color-accent); color: var(--color-on-accent); }
+.ui-btn--quiet { background: transparent; color: var(--color-ink); border-color: var(--color-line); }
+.ui-btn--quiet:hover:not(:disabled) { background: var(--color-raised); }
+.ui-btn--danger { background: var(--color-danger); color: var(--color-on-accent); }
+
+/* Loading keeps the button's width: the label stays in place (transparent, still in
+ * the accessibility tree) and the spinner overlays it. Never let a loading label
+ * resize the control. */
+.ui-btn[aria-busy='true'] .ui-btn-label { opacity: 0; }
+.ui-btn-spinner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ui-spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: ui-spin 700ms linear infinite;
+}
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+
+/* ---------- Input / Select / Field ---------- */
+.ui-input,
+.ui-select {
+  height: 2.5rem;
+  padding: 0 var(--space-12);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  background: var(--color-raised);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: var(--type-size-small);
+  transition: border-color var(--motion-duration-fast) ease;
+  width: 100%;
+}
+.ui-input::placeholder { color: var(--color-muted); }
+.ui-input:focus-visible,
+.ui-select:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; border-color: var(--color-focus); }
+
+.ui-field { display: flex; flex-direction: column; gap: var(--space-4); }
+.ui-field-label { font-size: var(--type-size-small); font-weight: var(--type-weight-display); color: var(--color-ink); }
+.ui-field-hint { font-size: var(--type-size-small); color: var(--color-muted); margin: 0; }
+.ui-field-error { font-size: var(--type-size-small); color: var(--color-danger); margin: 0; }
+.ui-field[data-invalid='true'] .ui-input,
+.ui-field[data-invalid='true'] .ui-select { border-color: var(--color-danger); }
+
+/* ---------- Card ---------- */
+.ui-card {
+  background: var(--color-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--elevation-card);
+  padding: var(--space-16);
+}
+
+/* ---------- Dialog ---------- */
+.ui-dialog {
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background: var(--color-raised);
+  color: var(--color-ink);
+  box-shadow: var(--elevation-raised);
+  padding: var(--space-24);
+  width: min(28rem, calc(100vw - var(--space-32)));
+}
+.ui-dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
+.ui-dialog[open] { animation: ui-dialog-in var(--motion-duration-base) var(--motion-easing-settle); }
+@keyframes ui-dialog-in {
+  from { opacity: 0; transform: translateY(var(--space-8)); }
+  to { opacity: 1; transform: none; }
+}
+.ui-dialog-title { margin: 0 0 var(--space-12); font-size: var(--type-size-title); font-weight: var(--type-weight-display); }
+.ui-dialog-footer { display: flex; justify-content: flex-end; gap: var(--space-8); margin-top: var(--space-24); }
+
+/* ---------- EmptyState ---------- */
+.ui-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-48) var(--space-24);
+  text-align: center;
+}
+.ui-empty-title { margin: 0; font-size: var(--type-size-body); font-weight: var(--type-weight-display); color: var(--color-ink); }
+.ui-empty-hint { margin: 0; font-size: var(--type-size-small); color: var(--color-muted); max-width: 24rem; }
+
+/* ---------- Skeleton (static — no shimmer; it reads cheap) ---------- */
+.ui-skeleton {
+  background: var(--color-line);
+  border-radius: var(--radius-control);
+  min-height: var(--space-16);
+}
+
+/* ---------- Toast ---------- */
+.ui-toaster {
+  position: fixed;
+  bottom: var(--space-24);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  z-index: 100;
+}
+.ui-toast {
+  background: var(--color-ink);
+  color: var(--color-surface);
+  border-radius: var(--radius-control);
+  padding: var(--space-12) var(--space-16);
+  font-size: var(--type-size-small);
+  box-shadow: var(--elevation-raised);
+  animation: ui-toast-in var(--motion-duration-base) var(--motion-easing-settle);
+}
+.ui-toast--danger { background: var(--color-danger); color: var(--color-on-accent); }
+@keyframes ui-toast-in {
+  from { opacity: 0; transform: translateY(var(--space-8)); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-btn, .ui-input, .ui-select { transition: none; }
+  .ui-dialog[open], .ui-toast { animation: none; }
+  .ui-spinner { animation-duration: 1.5s; }
+}

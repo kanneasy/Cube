@@ -1,0 +1,10 @@
+{
+  "detector": {
+    "ignoreRules": ["border-accent-on-rounded"],
+    "ignoreFiles": [],
+    "ignoreValues": [],
+    "ignoreRulesReasons": {
+      "border-accent-on-rounded": "Standing kit-wide waiver. The rule fires on an accent border on a rounded element, but only from its top/bottom arm — it is structurally incapable of firing on a left or right border (impeccable 3.6.0, cli/engine/rules/checks.mjs checkBorders). market-pulse.md's own 'colored left-border callout boxes' entry names a top border as the sanctioned escape from that anti-pattern, so the rule penalises the pattern the design bar recommends. side-tab still enforces the actual enemy (left/right stripes) down to 2px, and loses nothing from this waiver. Accepted cost, named deliberately: a thick (3-12px) accent stripe on the TOP or BOTTOM of a rounded element is now unenforced, because side-tab's horizontal-stripe arm only runs when border-radius is 0."
+    }
+  }
+}
