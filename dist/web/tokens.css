@@ -142,7 +142,7 @@
   --motion-gesture-orbit-cutoff-pxps: 26;
   --motion-gesture-turn-tangent-floor: 0.62;
   --motion-gesture-zoom-min: 0.24;
-  --motion-gesture-zoom-rest: 0.4;
+  --motion-gesture-zoom-rest: 0.45;
   --motion-gesture-zoom-max: 0.94;
   --motion-gesture-zoom-rubber-r: 0.16;
   --motion-gesture-tap-max-ms: 220;

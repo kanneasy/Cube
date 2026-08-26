@@ -143,17 +143,26 @@ export function App() {
     void libraryRef.current
       .readSetting<number>('zoom')
       .then((f) => {
-        if (typeof f === 'number') renderer.setZoom(f);
+        if (typeof f === 'number') {
+          renderer.setZoom(f);
+          lastSeenZoom = renderer.getZoom();
+        }
       })
       .catch(() => {
         // No stored preference, or storage unavailable. The default framing is correct.
       });
 
-    // Save it, debounced, so a pinch does not write on every frame.
+    // Save only a zoom the user actually CHOSE. Writing on every pointerup persisted
+    // the default itself, which quietly froze it: a later change to the resting framing
+    // could never reach anyone who had ever touched the cube.
+    let lastSeenZoom = renderer.getZoom();
     const onZoomSettled = () => {
+      const now = renderer.getZoom();
+      if (Math.abs(now - lastSeenZoom) < 0.001) return;
+      lastSeenZoom = now;
       window.clearTimeout(zoomSaveTimer.current);
       zoomSaveTimer.current = window.setTimeout(() => {
-        void libraryRef.current.writeSetting('zoom', renderer.getZoom()).catch(() => {});
+        void libraryRef.current.writeSetting('zoom', now).catch(() => {});
       }, 600);
     };
     stage.addEventListener('pointerup', onZoomSettled);

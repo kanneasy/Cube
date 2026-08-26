@@ -43,7 +43,7 @@ export function defaultOrientation(): THREE.Quaternion {
  * at the worst pose.
  */
 export const ZOOM_MIN = 0.24;
-export const ZOOM_REST = 0.4;
+export const ZOOM_REST = 0.45;
 export const ZOOM_MAX = 0.94;
 
 /** Rubber-band shape past a zoom limit: an asymptotic 17% ceiling, reached only by pulling. */
