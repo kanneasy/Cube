@@ -10,6 +10,9 @@ import type { CubeRenderer } from './renderer';
 // function. Reimplementing the projection here is what hid the inverted-drag bug:
 // this file's own version was correct and the renderer's was not, so the tests agreed
 // with the intention rather than with the code.
+/** One world unit in px at the reference framing, matching the renderer's own solve. */
+const UNIT_PX = 262 / 2 / (12 * Math.tan((28 * Math.PI) / 360));
+
 function mockRenderer(coords: Vec3): CubeRenderer {
   const camera = new PerspectiveCamera(28, 390 / 524, 0.1, 100);
   const distance = 12;
@@ -26,7 +29,16 @@ function mockRenderer(coords: Vec3): CubeRenderer {
 
   return {
     cubieCoords: () => coords,
-    projectDirection: (origin: Vec3, direction: Vec3) => projectDirection(camera, origin, direction),
+    // The same projection the renderer uses, including the tangent length the turn
+    // gain needs -- reimplementing it here is what hid the inverted-drag bug.
+    projectTangent: (origin: Vec3, direction: Vec3) => {
+      const v = projectDirection(camera, origin, direction, undefined, false);
+      const px = Math.hypot((v.x * 390) / 2, (v.y * 524) / 2);
+      const n = Math.hypot(v.x, v.y) || 1;
+      return { x: v.x / n, y: v.y / n, length: px / UNIT_PX };
+    },
+    unitScreenPx: () => UNIT_PX,
+    faceWidthPx: () => UNIT_PX * 3,
   } as unknown as CubeRenderer;
 }
 

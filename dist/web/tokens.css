@@ -39,10 +39,10 @@
   --cube-universal-right: #E8497F;
   --cube-shade-up: 1;
   --cube-shade-toward: 0.88;
-  --cube-shade-left: 0.82;
-  --cube-shade-right: 0.76;
-  --cube-shade-away: 0.76;
-  --cube-shade-down: 0.7;
+  --cube-shade-left: 0.84;
+  --cube-shade-right: 0.72;
+  --cube-shade-away: 0.72;
+  --cube-shade-down: 0.66;
   --cube-shade-universal-up: 1;
   --cube-shade-universal-toward: 0.94;
   --cube-shade-universal-left: 0.88;
@@ -52,6 +52,12 @@
   --cube-grab-lift: 1.06;
   --cube-sticker-inset: 0.06;
   --cube-sticker-inset-universal: 0.09;
+  --cube-shade-body-up: 3;
+  --cube-shade-body-toward: 1.9;
+  --cube-shade-body-left: 1.5;
+  --cube-shade-body-right: 0.9;
+  --cube-shade-body-away: 0.9;
+  --cube-shade-body-down: 0.5;
   --type-family-display: Supreme, ui-sans-serif, system-ui, sans-serif;
   --type-family-body: Supreme, ui-sans-serif, system-ui, sans-serif;
   --type-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
@@ -60,7 +66,7 @@
   --type-weight-label: 700;
   --type-weight-body: 400;
   --type-weight-mono: 500;
-  --type-size-timer: clamp(4rem, 19vw, 5.25rem);
+  --type-size-timer: clamp(2.5rem, 12vw, 3.25rem);
   --type-size-metric: 1.375rem;
   --type-size-display: clamp(1.5rem, 6vw, 1.875rem);
   --type-size-title: 1.0625rem;
@@ -95,8 +101,8 @@
   --space-64: 64px;
   --space-gutter: 24px;
   --size-rail: 36px;
-  --size-readout: 148px;
-  --size-splits: 44px;
+  --size-readout: 124px;
+  --size-splits: 38px;
   --size-qualifier: 20px;
   --size-notation: 32px;
   --size-controlbar: 64px;
@@ -118,7 +124,7 @@
   --motion-duration-snap: 170ms;
   --motion-duration-stop: 260ms;
   --motion-duration-slow: 320ms;
-  --motion-duration-orbit-settle: 340ms;
+  --motion-duration-view-reset: 260ms;
   --motion-easing-settle: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-easing-snap: cubic-bezier(0.18, 0.92, 0.22, 1.055);
   --motion-easing-pop: cubic-bezier(0.34, 1.56, 0.4, 1);
@@ -126,15 +132,22 @@
   --motion-spring-turn: stiffness 520, damping 26, mass 0.55;
   --motion-spring-undo: stiffness 620, damping 30, mass 0.5;
   --motion-spring-refuse: stiffness 700, damping 34, mass 0.5;
-  --motion-spring-orbit: stiffness 180, damping 24, mass 1;
-  --motion-gesture-turn-gain: 0.42;
-  --motion-gesture-orbit-gain: 0.55;
+  --motion-gesture-turn-gain: 1.06;
   --motion-gesture-flick-threshold-degps: 900;
   --motion-gesture-orbit-tau: 260ms;
-  --motion-gesture-orbit-cutoff-degps: 12;
-  --motion-gesture-pitch-clamp-deg: 72;
   --motion-gesture-refuse-ceiling-deg: 5;
   --motion-gesture-clack-delay: 70ms;
+  --motion-gesture-trackball-gain-deg: 180;
+  --motion-gesture-orbit-tau-ms: 400;
+  --motion-gesture-orbit-cutoff-pxps: 26;
+  --motion-gesture-turn-tangent-floor: 0.62;
+  --motion-gesture-zoom-min: 0.24;
+  --motion-gesture-zoom-rest: 0.4;
+  --motion-gesture-zoom-max: 0.94;
+  --motion-gesture-zoom-rubber-r: 0.16;
+  --motion-gesture-tap-max-ms: 220;
+  --motion-gesture-tap-max-px: 8;
+  --motion-gesture-double-tap-window-ms: 280;
 }
 
 :root[data-theme="light"] {

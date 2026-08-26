@@ -2,70 +2,106 @@
 //
 // The renderer reads the engine's cubie model directly -- position plus orientation
 // matrix -- which is why the engine was built as rotations rather than facelet
-// permutation tables. There is no translation layer between logic and pixels.
+// permutation tables. There is no translation layer between the logic and the pixels.
+//
+// The camera NEVER moves and never rotates. It sits at (0, 0, distance) looking at the
+// origin, and zoom is the only thing that touches distance. All orientation lives in
+// the cube's own quaternion. That single decision does three things at once: it removes
+// gimbal lock from the orbit structurally, it makes zoom one uncoupled scalar, and it
+// makes view space equal world space up to a translation -- so the view-space shading
+// ramp is anchored to the screen by construction rather than by bookkeeping.
 
 import * as THREE from 'three';
 import { applyMove, stickersOf, TURNS, type CubeState, type Face, type Move, type TurnBase, type Vec3 } from '../../cube/state';
-import { BODY_COLOR, SHADE, type Palette } from './palette';
+import { BODY_COLOR, SHADE_BODY, type Palette, type Ramp } from './palette';
 import { projectDirection as projectDirectionOnto } from './project';
 import { prefersReducedMotion } from './motion';
 
 const CUBIE = 0.98; // leaves a hairline of black between cubies
 const SPACING = 1.0;
+const FOV = 28;
 
-/**
- * Where the camera sits: azimuth +45deg, elevation +24deg, the three-quarter view
- * showing U, F and R. The CAMERA no longer moves. The cube does.
- *
- * It used to be the other way round -- a yaw/pitch camera orbit, pitch clamped to
- * +/-72deg so nobody ended up edge-on, settling onto one of eight canonical poses so
- * stickers stayed readable. Both were argued decisions and both are gone, because a
- * person holding the phone asked to "rotate the cube fully and continuously in any
- * direction" and neither a clamp nor a snap can do that. Rotating the cube as a
- * trackball also has no gimbal lock, which a yaw/pitch camera does the moment pitch
- * passes vertical.
- */
+/** The default pose: Ry(-45) then Rx(+24), showing U, F and R. */
 export const DEFAULT_YAW = Math.PI / 4;
 export const DEFAULT_PITCH = (24 * Math.PI) / 180;
 
+export function defaultOrientation(): THREE.Quaternion {
+  const rx = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), DEFAULT_PITCH);
+  const ry = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -DEFAULT_YAW);
+  return rx.multiply(ry);
+}
+
 /**
- * Zoom limits, expressed as a MULTIPLE of the resting framing rather than as camera
- * distances. Absolute distances were viewport-dependent: the framing solve lands
- * around 8 units on a phone, so a 7.2 near limit allowed ten percent of zoom-in and
- * called it pinch-to-zoom.
+ * Zoom, as `f` -- the cube's on-screen FACE width divided by the stage width. Framing on
+ * a rotation-invariant quantity is the point: a free-rotating cube's projected
+ * silhouette swings between 3.0 and 5.196 world units, so framing on the silhouette
+ * would make the cube breathe as it turned.
+ *
+ * The resting value is 0.40 rather than design's 0.55 at the user's direction. At 0.55
+ * the silhouette reaches 95% of the stage width at a corner-on pose, leaving 8px of
+ * background each side -- nowhere to put the thumb that has to orbit it. 0.40 leaves 53px
+ * at the worst pose.
  */
-// The resting framing already puts the cube at 78% of the stage width, so there is
-// less headroom to zoom IN than the number suggests: at 0.5 the cube spans ~156% of
-// the stage and a single face fills the screen with nothing to orient by. 0.68 puts it
-// at roughly 115% -- stickers genuinely larger, the silhouette still readable.
-export const ZOOM_MIN = 0.68;
-export const ZOOM_MAX = 2.5;
-export const ZOOM_DEFAULT = 12;
+export const ZOOM_MIN = 0.24;
+export const ZOOM_REST = 0.4;
+export const ZOOM_MAX = 0.94;
+
+/** Rubber-band shape past a zoom limit: an asymptotic 17% ceiling, reached only by pulling. */
+export const ZOOM_RUBBER_R = 0.16;
 
 interface StickerRef {
   readonly mesh: THREE.Mesh;
   readonly material: THREE.MeshBasicMaterial;
-  /** Which face this sticker belongs to. Fixed for the life of the sticker. */
   readonly face: Face;
   base: THREE.Color;
-  /** The sticker's normal in the cubie's own frame. */
   readonly localNormal: THREE.Vector3;
 }
 
 interface CubieRef {
   readonly group: THREE.Group;
+  readonly body: THREE.Mesh;
   readonly stickers: StickerRef[];
-  /** Settled transform, before any live layer rotation is applied. */
   basePosition: THREE.Vector3;
   baseQuaternion: THREE.Quaternion;
-  /** Which axis coordinate this cubie currently sits at, for layer selection. */
   coords: Vec3;
 }
 
-/** What a covered cube shows: its own plastic, lifted just enough to keep the grid. */
-const CONCEALED_COLOR = new THREE.Color(BODY_COLOR).multiplyScalar(1.9);
-
 const AXIS_VECTORS = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
+
+/** BoxGeometry's material groups, in order, as local face normals. */
+const BOX_FACE_NORMALS = [
+  new THREE.Vector3(1, 0, 0),
+  new THREE.Vector3(-1, 0, 0),
+  new THREE.Vector3(0, 1, 0),
+  new THREE.Vector3(0, -1, 0),
+  new THREE.Vector3(0, 0, 1),
+  new THREE.Vector3(0, 0, -1),
+];
+
+/**
+ * Blend a ramp by the SQUARED positive components of a view-space normal.
+ *
+ * Exactly three axes can be positive and their squares sum to one, so this is exact at
+ * the axes, smooth between them, and needs no normalising divide. Blending by the raw
+ * components over their sum is a different, flatter interpolation that agrees only at
+ * the axes -- and free rotation makes off-axis normals the common case.
+ */
+export function shadeFor(n: THREE.Vector3, ramp: Ramp): number {
+  const up = Math.max(0, n.y);
+  const down = Math.max(0, -n.y);
+  const right = Math.max(0, n.x);
+  const left = Math.max(0, -n.x);
+  const toward = Math.max(0, n.z);
+  const away = Math.max(0, -n.z);
+  return (
+    up * up * ramp.up +
+    down * down * ramp.down +
+    right * right * ramp.right +
+    left * left * ramp.left +
+    toward * toward * ramp.toward +
+    away * away * ramp.away
+  );
+}
 
 export class CubeRenderer {
   private readonly scene = new THREE.Scene();
@@ -76,17 +112,20 @@ export class CubeRenderer {
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
 
-  /** The cube's own orientation. A free trackball: no clamp, no snap, no gimbal lock. */
-  private readonly orientation = new THREE.Quaternion();
-  private distance = ZOOM_DEFAULT;
-  /** Set once by resize(); zoom multiplies it. */
-  private framedDistance = ZOOM_DEFAULT;
+  /** The cube's own orientation. Free trackball: no clamp, no pole, no snap. */
+  private readonly orientation = defaultOrientation();
+  private zoomF = ZOOM_REST;
+  private distance = 12;
+  /** One world unit, in CSS px, at the cube's centre depth. */
+  private unitPx = 60;
 
-  private zoomScale = 1;
+  /** Body faces shade by their own normals, so a turning layer needs its own set. */
+  private readonly restingBody: THREE.MeshBasicMaterial[] = [];
+  private readonly turningBody: THREE.MeshBasicMaterial[] = [];
+
+  private concealed = false;
   private liveBase: TurnBase | null = null;
   private liveAngle = 0;
-  private concealed = false;
-
   private frameHandle = 0;
 
   constructor(
@@ -100,7 +139,7 @@ export class CubeRenderer {
     this.renderer.domElement.style.display = 'block';
     this.renderer.domElement.style.touchAction = 'none';
 
-    this.camera = new THREE.PerspectiveCamera(28, 1, 0.1, 100);
+    this.camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 100);
     this.scene.add(this.root);
     this.buildCubies();
     this.resize();
@@ -109,21 +148,23 @@ export class CubeRenderer {
 
   private buildCubies(): void {
     const bodyGeometry = new THREE.BoxGeometry(CUBIE, CUBIE, CUBIE);
-    const bodyMaterial = new THREE.MeshBasicMaterial({ color: BODY_COLOR });
+    for (let i = 0; i < 6; i++) {
+      this.restingBody.push(new THREE.MeshBasicMaterial({ color: BODY_COLOR }));
+      this.turningBody.push(new THREE.MeshBasicMaterial({ color: BODY_COLOR }));
+    }
 
     for (let x = -1; x <= 1; x++) {
       for (let y = -1; y <= 1; y++) {
         for (let z = -1; z <= 1; z++) {
           if (!x && !y && !z) continue;
           const group = new THREE.Group();
-          group.add(new THREE.Mesh(bodyGeometry, bodyMaterial));
+          const body = new THREE.Mesh(bodyGeometry, this.restingBody);
+          group.add(body);
 
           const home: Vec3 = [x, y, z];
           const stickers: StickerRef[] = [];
           for (const { normal, color } of stickersOf({ home, pos: home, rot: [1, 0, 0, 0, 1, 0, 0, 0, 1] })) {
             const size = CUBIE * (1 - this.palette.stickerInset * 2);
-            // Square stickers, no corner radius. That is the decision that makes this
-            // read as a designed object rather than a render of a toy.
             const geometry = new THREE.PlaneGeometry(size, size);
             const base = new THREE.Color(this.palette.faces[color]);
             const material = new THREE.MeshBasicMaterial({ color: base.clone(), side: THREE.FrontSide });
@@ -138,6 +179,7 @@ export class CubeRenderer {
           this.root.add(group);
           this.cubies.push({
             group,
+            body,
             stickers,
             basePosition: new THREE.Vector3(x * SPACING, y * SPACING, z * SPACING),
             baseQuaternion: new THREE.Quaternion(),
@@ -148,7 +190,6 @@ export class CubeRenderer {
     }
   }
 
-  /** Snap every cubie to the logical state. Called after a turn commits. */
   setState(state: CubeState): void {
     state.cubies.forEach((cubie, i) => {
       const ref = this.cubies[i];
@@ -167,24 +208,13 @@ export class CubeRenderer {
   }
 
   /**
-   * Swap the pigment without moving any face assignment. A sticker belongs to a face
-   * permanently; only which colour that face is drawn in changes, which is what lets a
-   * cuber's memory of the scheme survive the swap.
-   */
-  /**
-   * Play a sequence onto the cube, one quarter turn at a time.
+   * Play a sequence onto the cube, one quarter turn at a time. Used for the opening: the
+   * app shows a solved cube and scrambles itself rather than showing a spinner.
    *
-   * Used for the opening: the app shows a solved cube and scrambles itself in front of
-   * you rather than showing a spinner, which covers the solver's warm-up honestly and
-   * is a better first second than a loader.
-   *
-   * The LOGICAL state is already final before this runs; this only animates the visual
-   * catching up. But the visual must never be left BEHIND the logic, which is the trap
-   * here: requestAnimationFrame does not run in a hidden tab, so without a guard the
-   * cube would sit showing a solved position while the session holds a scrambled one,
-   * and the user would drag against a cube that is not the cube they can see. So a
-   * hidden document skips the animation entirely, and a wall-clock timer force-lands
-   * the final state if frames stop partway for any other reason.
+   * The LOGICAL state is already final before this runs. The visual must never be left
+   * BEHIND it, so a hidden document (where requestAnimationFrame does not run at all)
+   * lands immediately, and a wall-clock timer force-lands if frames stop for any other
+   * reason.
    */
   playSequence(from: CubeState, moves: readonly Move[], msPerMove: number, onDone?: () => void): () => void {
     let cancelled = false;
@@ -202,17 +232,11 @@ export class CubeRenderer {
       onDone?.();
     };
 
-    // Frames do not run while the document is hidden. Land immediately rather than
-    // leaving the stage showing a position the logic has already moved past. The same
-    // immediate landing serves reduced motion: this animation is decorative, and its
-    // whole job is to fill a wait somebody has asked not to watch.
     if (prefersReducedMotion() || (typeof document !== 'undefined' && document.hidden)) {
       onDone?.();
       return () => {};
     }
 
-    // Belt and braces for every other reason frames might stop: a backgrounded tab
-    // mid-sequence, a stalled compositor, a device throttling under load.
     const guard = window.setTimeout(land, moves.length * msPerMove + 1500);
 
     const step = (now: number): void => {
@@ -224,7 +248,6 @@ export class CubeRenderer {
         return;
       }
       const t = Math.min(1, (now - startedAt) / msPerMove);
-      // Ease out, so each turn arrives rather than stopping dead.
       const eased = 1 - (1 - t) ** 3;
       this.setLayerRotation(move.base, eased * (Math.PI / 2) * move.amount);
 
@@ -247,6 +270,14 @@ export class CubeRenderer {
     };
   }
 
+  /**
+   * Hide what the cube is showing without hiding the cube. Competition inspection begins
+   * when the scramble is revealed, so before that it must genuinely not be readable.
+   */
+  setConcealed(concealed: boolean): void {
+    this.concealed = concealed;
+  }
+
   setPalette(palette: Palette): void {
     this.palette = palette;
     const inset = CUBIE * (1 - palette.stickerInset * 2);
@@ -259,74 +290,98 @@ export class CubeRenderer {
     }
   }
 
-  /** Live layer rotation while a thumb is dragging. Angle in radians, clockwise-positive. */
   setLayerRotation(base: TurnBase | null, radians: number): void {
     this.liveBase = base;
     this.liveAngle = radians;
   }
 
-  /**
-   * Hide what the cube is showing without hiding the cube.
-   *
-   * Competition inspection begins when the scramble is REVEALED, so before that the
-   * scramble must genuinely not be readable -- a label over a fully-coloured cube
-   * defeats the only thing covering it is for. Every sticker renders in the body
-   * colour, so the object, its silhouette and its grid all stay, and only the
-   * information goes.
-   */
-  setConcealed(concealed: boolean): void {
-    this.concealed = concealed;
-  }
+  // ---- orbit ----
 
   /**
-   * Turn the cube about the axes the SCREEN defines, not the ones the world does.
-   *
-   * Dragging right always spins the cube rightward from where you are looking, however
-   * far it has already been turned -- which is what makes a trackball feel like a hand
-   * on an object rather than like two sliders.
+   * Turn the cube about the axes the SCREEN defines. Because the camera never rotates,
+   * those are simply the world axes, so a drag of (dx, dy) rotates about
+   * normalize(dy, dx, 0) -- screen y being down.
    */
-  orbitBy(radiansRight: number, radiansDown: number): void {
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
-    const q = new THREE.Quaternion()
-      .setFromAxisAngle(up, radiansRight)
-      .multiply(new THREE.Quaternion().setFromAxisAngle(right, radiansDown));
-    this.orientation.premultiply(q).normalize();
+  orbitBy(dxPx: number, dyPx: number): void {
+    const travel = Math.hypot(dxPx, dyPx);
+    if (travel === 0) return;
+    const axis = new THREE.Vector3(dyPx, dxPx, 0).normalize();
+    const angle = travel * (Math.PI / this.faceWidthPx());
+    this.orientation.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, angle)).normalize();
   }
 
-  /** Momentum: keep turning about one screen-space axis after the finger has gone. */
+  /** Momentum keeps turning about a screen-fixed axis after the finger has gone. */
   spinBy(axis: THREE.Vector3, radians: number): void {
     this.orientation.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, radians)).normalize();
   }
 
-  /** The screen's own axes in world space, for a momentum spin to keep using. */
-  screenAxes(): { up: THREE.Vector3; right: THREE.Vector3 } {
-    return {
-      up: new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion),
-      right: new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion),
-    };
+  setOrientation(q: THREE.Quaternion): void {
+    this.orientation.copy(q).normalize();
   }
 
-  /** 1 is the framing resize() chose; smaller pulls the camera in. */
-  setZoom(scale: number): void {
-    this.zoomScale = THREE.MathUtils.clamp(scale, ZOOM_MIN, ZOOM_MAX);
-    this.distance = this.framedDistance * this.zoomScale;
-  }
-
-  getZoom(): number {
-    return this.zoomScale;
-  }
-
-  /** Read-only view of the cube's orientation, for diagnostics. */
   orientationQuaternion(): THREE.Quaternion {
     return this.orientation.clone();
   }
 
+  // ---- zoom ----
+
+  /** `f`: the cube's on-screen face width over the stage width. */
+  setZoom(f: number): void {
+    this.zoomF = f;
+    this.applyFraming();
+  }
+
+  getZoom(): number {
+    return this.zoomF;
+  }
+
+  /** One world unit in CSS px at the cube's centre depth. */
+  unitScreenPx(): number {
+    return this.unitPx;
+  }
+
+  /** The cube's on-screen face width, D = 3S. The unit every gesture gain is stated in. */
+  faceWidthPx(): number {
+    return this.unitPx * 3;
+  }
+
+  private applyFraming(): void {
+    const w = this.container.clientWidth || 1;
+    const h = this.container.clientHeight || 1;
+    // distance = 1.5 * H / (f * W * tan(fov/2))
+    const tan = Math.tan((FOV * Math.PI) / 360);
+    this.distance = (1.5 * h) / (this.zoomF * w * tan);
+    this.unitPx = h / 2 / (this.distance * tan);
+    this.camera.position.set(0, 0, this.distance);
+    this.camera.up.set(0, 1, 0);
+    this.camera.lookAt(0, 0, 0);
+    this.camera.updateMatrixWorld();
+  }
+
+  // ---- projection ----
+
   /**
-   * Which sticker is under a screen point. Raycast happens once, at touch start: the
-   * rest of a drag is driven from the 2D screen delta, so there is no per-move
-   * raycasting against a moving mesh.
+   * Where a direction in the cube's own frame points on screen, +y up, together with the
+   * projected LENGTH of that unit direction -- 1 when it lies in the screen plane, 0
+   * when it points at the camera. The turn gain needs that length: a face turned nearly
+   * edge-on would otherwise get an uncompensated 1:1 gain and whip.
    */
+  projectTangent(origin: Vec3, direction: Vec3): { x: number; y: number; length: number } {
+    const v = projectDirectionOnto(this.camera, origin, direction, this.orientation, false);
+    const w = this.container.clientWidth || 1;
+    const h = this.container.clientHeight || 1;
+    const px = Math.hypot((v.x * w) / 2, (v.y * h) / 2);
+    const unit = px / this.unitPx;
+    const n = Math.hypot(v.x, v.y) || 1;
+    return { x: v.x / n, y: v.y / n, length: unit };
+  }
+
+  /** Backwards-compatible unit-vector form, used where only the direction matters. */
+  projectDirection(origin: Vec3, direction: Vec3): THREE.Vector2 {
+    const t = this.projectTangent(origin, direction);
+    return new THREE.Vector2(t.x, t.y);
+  }
+
   pickSticker(clientX: number, clientY: number): { cubieIndex: number; worldNormal: Vec3 } | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -341,87 +396,25 @@ export class CubeRenderer {
     const cubieIndex = this.cubies.findIndex((c) => c.stickers.some((s) => s.mesh === mesh));
     if (cubieIndex < 0) return null;
     const sticker = this.cubies[cubieIndex].stickers.find((s) => s.mesh === mesh)!;
+    // Deliberately the CUBE-space normal, not the world one: the move logic works in the
+    // cube's own frame, where the grid coordinates live.
     const n = sticker.localNormal.clone().applyQuaternion(this.cubies[cubieIndex].group.quaternion).round();
     return { cubieIndex, worldNormal: [n.x, n.y, n.z] };
   }
 
-  /** The cubie's settled grid coordinates, for deciding which layer a drag grabbed. */
   cubieCoords(index: number): Vec3 {
     return this.cubies[index].coords;
-  }
-
-  /**
-   * Where a direction in the cube's own frame points on screen, +y up.
-   *
-   * Shared with the gesture tests rather than reimplemented beside them: the previous
-   * split -- a renderer that negated y and a test mock that did not -- is the whole
-   * reason every vertical drag turned the wrong way.
-   */
-  projectDirection(origin: Vec3, direction: Vec3): THREE.Vector2 {
-    return projectDirectionOnto(this.camera, origin, direction, this.orientation);
-  }
-
-  /**
-   * One cube edge, in CSS pixels on screen. The turn gain is specified relative to
-   * this rather than to the viewport, so the feel is identical on any phone.
-   */
-  screenEdgeLength(): number {
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const a = new THREE.Vector3(-1.5, 1.5, 1.5).applyQuaternion(this.orientation).project(this.camera);
-    const b = new THREE.Vector3(1.5, 1.5, 1.5).applyQuaternion(this.orientation).project(this.camera);
-    return (Math.hypot(b.x - a.x, b.y - a.y) / 2) * rect.width;
   }
 
   resize(): void {
     const w = this.container.clientWidth || 1;
     const h = this.container.clientHeight || 1;
     this.camera.aspect = w / h;
-    // Frame so the cube's projected width is 78% of the stage. Projected size is
-    // very nearly inversely proportional to distance, so two corrections converge.
-    this.distance = ZOOM_DEFAULT;
-    for (let i = 0; i < 3; i++) {
-      this.placeCamera();
-      this.camera.updateProjectionMatrix();
-      const width = this.projectedWidth();
-      if (width <= 0) break;
-      this.distance *= width / 0.78;
-    }
-    // That solved for the resting framing; zoom is expressed relative to it, so a
-    // pinch survives a rotation and a resize.
-    this.framedDistance = this.distance;
-    this.setZoom(this.zoomScale);
-    this.placeCamera();
+    this.applyFraming();
     this.camera.updateProjectionMatrix();
     // updateStyle defaults true; passing false makes the canvas take the drawing-buffer
     // pixel size as CSS pixels and the scene pushes off-frame.
     this.renderer.setSize(w, h);
-  }
-
-  private projectedWidth(): number {
-    let min = Infinity;
-    let max = -Infinity;
-    for (const sx of [-1.5, 1.5]) {
-      for (const sy of [-1.5, 1.5]) {
-        for (const sz of [-1.5, 1.5]) {
-          const p = new THREE.Vector3(sx, sy, sz).applyQuaternion(this.orientation).project(this.camera);
-          min = Math.min(min, p.x);
-          max = Math.max(max, p.x);
-        }
-      }
-    }
-    return (max - min) / 2; // normalised device coords span -1..1
-  }
-
-  private placeCamera(): void {
-    const cp = Math.cos(DEFAULT_PITCH);
-    this.camera.position.set(
-      this.distance * cp * Math.sin(DEFAULT_YAW),
-      this.distance * Math.sin(DEFAULT_PITCH),
-      this.distance * cp * Math.cos(DEFAULT_YAW),
-    );
-    this.camera.up.set(0, 1, 0); // no camera roll, ever
-    this.camera.lookAt(0, 0, 0);
-    this.root.quaternion.copy(this.orientation);
   }
 
   private applyTransforms(): void {
@@ -438,49 +431,61 @@ export class CubeRenderer {
       if (live && inLayer) {
         cubie.group.position.copy(cubie.basePosition).applyQuaternion(live);
         cubie.group.quaternion.copy(live).multiply(cubie.baseQuaternion);
+        cubie.body.material = this.turningBody;
       } else {
         cubie.group.position.copy(cubie.basePosition);
         cubie.group.quaternion.copy(cubie.baseQuaternion);
+        cubie.body.material = this.restingBody;
       }
     }
   }
 
   /**
-   * Re-evaluate the view-space value ramp. Blended by the positive components of the
-   * view-space normal, so a sticker mid-turn shades smoothly instead of stepping
-   * between the six fixed values.
+   * Re-evaluate the value ramp against each sticker's WORLD normal.
+   *
+   * The cube's orientation lives on the root, so shading against the cubie's own
+   * quaternion -- which no longer contains the orbit -- would silently shade a cube that
+   * is not where it is. Because the camera never rotates, world space and view space
+   * differ only by a translation, so no view transform is needed at all.
    */
   private applyShading(): void {
-    const view = this.camera.matrixWorldInverse;
     const n = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    const ramp = this.palette.shade;
+
     for (const cubie of this.cubies) {
+      q.copy(this.orientation).multiply(cubie.group.quaternion);
       for (const sticker of cubie.stickers) {
-        n.copy(sticker.localNormal).applyQuaternion(cubie.group.quaternion).transformDirection(view);
-        const w = {
-          up: Math.max(0, n.y),
-          down: Math.max(0, -n.y),
-          right: Math.max(0, n.x),
-          left: Math.max(0, -n.x),
-          toward: Math.max(0, n.z),
-          away: Math.max(0, -n.z),
-        };
-        const total = w.up + w.down + w.right + w.left + w.toward + w.away || 1;
-        const shade =
-          (w.up * SHADE.up +
-            w.down * SHADE.down +
-            w.right * SHADE.right +
-            w.left * SHADE.left +
-            w.toward * SHADE.toward +
-            w.away * SHADE.away) /
-          total;
-        sticker.material.color.copy(this.concealed ? CONCEALED_COLOR : sticker.base).multiplyScalar(shade);
+        n.copy(sticker.localNormal).applyQuaternion(q);
+        // Three.js holds colours in linear working space and converts on output, so
+        // multiplying here IS multiplying in linear light, which is what the ramp
+        // specifies. Multiplying the sRGB bytes lands a few points off and desaturates.
+        sticker.material.color.copy(this.concealed ? CONCEALED_COLOR : sticker.base).multiplyScalar(shadeFor(n, ramp));
       }
+    }
+
+    // The plastic takes the same blend with a much wider ramp. It is achromatic, so a
+    // wide ramp costs no information -- and it is the only form cue that survives the
+    // Universal palette's deliberately compressed sticker ramp.
+    const liveSpec = this.liveBase ? TURNS[this.liveBase] : null;
+    const liveQ = liveSpec
+      ? new THREE.Quaternion().setFromAxisAngle(AXIS_VECTORS[liveSpec.axis], liveSpec.negIsCw ? -this.liveAngle : this.liveAngle)
+      : null;
+
+    for (let i = 0; i < 6; i++) {
+      n.copy(BOX_FACE_NORMALS[i]).applyQuaternion(this.orientation);
+      this.restingBody[i].color.copy(BODY_BASE).multiplyScalar(this.concealed ? 1 : shadeFor(n, SHADE_BODY));
+      if (liveQ) {
+        q.copy(this.orientation).multiply(liveQ);
+        n.copy(BOX_FACE_NORMALS[i]).applyQuaternion(q);
+      }
+      this.turningBody[i].color.copy(BODY_BASE).multiplyScalar(this.concealed ? 1 : shadeFor(n, SHADE_BODY));
     }
   }
 
   private loop = (): void => {
     this.frameHandle = requestAnimationFrame(this.loop);
-    this.placeCamera();
+    this.root.quaternion.copy(this.orientation);
     this.camera.updateMatrixWorld();
     this.applyTransforms();
     this.root.updateMatrixWorld(true);
@@ -498,3 +503,7 @@ export class CubeRenderer {
     return this.renderer.domElement;
   }
 }
+
+/** What a covered cube shows: its own plastic, lifted just enough to keep the grid. */
+const CONCEALED_COLOR = new THREE.Color(BODY_COLOR).multiplyScalar(1.9);
+const BODY_BASE = new THREE.Color(BODY_COLOR);

@@ -34,6 +34,8 @@ export function projectDirection(
   origin: readonly [number, number, number],
   direction: readonly [number, number, number],
   orientation?: Quaternion,
+  /** Pass false to keep the projected magnitude, which the turn gain needs. */
+  normalise = true,
 ): Vector2 {
   a.set(origin[0], origin[1], origin[2]);
   b.set(origin[0] + direction[0], origin[1] + direction[1], origin[2] + direction[2]);
@@ -43,5 +45,6 @@ export function projectDirection(
   }
   a.project(camera);
   b.project(camera);
-  return new Vector2(b.x - a.x, b.y - a.y).normalize();
+  const v = new Vector2(b.x - a.x, b.y - a.y);
+  return normalise ? v.normalize() : v;
 }

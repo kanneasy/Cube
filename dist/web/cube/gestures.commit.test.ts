@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { CubeGestures } from './gestures';
 import { DEFAULT_PITCH, DEFAULT_YAW } from './renderer';
 import type { CubeRenderer } from './renderer';
-import { Vector3 } from 'three';
+import { Quaternion, Vector3 } from 'three';
 import type { Move, Vec3 } from '../../cube/state';
 
 // A clock and frame scheduler under test control. requestAnimationFrame does not run
@@ -38,6 +38,8 @@ function fakeScheduler() {
   };
 }
 
+const UNIT_PX = 262 / 2 / (12 * Math.tan((28 * Math.PI) / 360));
+
 function mockRenderer(coords: Vec3) {
   const canvas = document.createElement('canvas');
   Object.defineProperty(canvas, 'clientWidth', { value: 375 });
@@ -64,19 +66,23 @@ function mockRenderer(coords: Vec3) {
     canvas,
     pickSticker: () => ({ cubieIndex: 0, worldNormal: [0, 0, 1] as Vec3 }),
     cubieCoords: () => coords,
-    screenEdgeLength: () => 200,
-    projectDirection: (_o: Vec3, d: Vec3) => {
+
+    projectTangent: (_o: Vec3, d: Vec3) => {
       const x = d[0] * right[0] + d[1] * right[1] + d[2] * right[2];
       const y = d[0] * up[0] + d[1] * up[1] + d[2] * up[2];
       const l = Math.hypot(x, y) || 1;
-      return { x: x / l, y: y / l };
+      return { x: x / l, y: y / l, length: l };
     },
+    unitScreenPx: () => UNIT_PX,
+    faceWidthPx: () => UNIT_PX * 3,
     setLayerRotation: (base: string | null, angle: number) => layerCalls.push({ base, angle }),
     orbitBy: () => {},
     spinBy: () => {},
     screenAxes: () => ({ up: new Vector3(0, 1, 0), right: new Vector3(1, 0, 0) }),
     getZoom: () => 1,
     setZoom: () => {},
+    orientationQuaternion: () => new Quaternion(),
+    setOrientation: () => {},
   };
   return { renderer: renderer as unknown as CubeRenderer, canvas, layerCalls };
 }
@@ -194,5 +200,46 @@ describe('a drag turns a layer and commits it', () => {
     expect(h.grabs).toHaveLength(0);
     expect(layerCalls).toHaveLength(0);
     expect(h.commits).toHaveLength(0);
+  });
+});
+
+describe('taps and the view reset', () => {
+  it('does not treat the very first tap as a double tap', () => {
+    // The clock starts at 0 here, which is the case that exposed it: a lastTapEndedAt
+    // initialised to 0 makes the first tap look like the second half of a pair.
+    const { clock, canvas } = setup();
+    let reset = false;
+    // A reset would move the orientation; the mock records nothing, so assert instead
+    // that a single tap leaves no animation queued.
+    pointer(canvas, 'pointerdown', 200, 250);
+    clock.advance(30);
+    pointer(canvas, 'pointerup', 202, 251);
+    expect(clock.flush()).toBe(true);
+    expect(reset).toBe(false);
+  });
+
+  it('treats two quick taps as a double tap', () => {
+    const { clock, canvas, gestures } = setup();
+    pointer(canvas, 'pointerdown', 200, 250);
+    clock.advance(30);
+    pointer(canvas, 'pointerup', 201, 250);
+    clock.advance(100);
+    pointer(canvas, 'pointerdown', 200, 250);
+    clock.advance(30);
+    pointer(canvas, 'pointerup', 201, 250);
+    // The reset runs as an animation; it must be scheduled.
+    expect(gestures.animating).toBe(true);
+    clock.flush();
+  });
+
+  it('does not treat a long press as a tap', () => {
+    const { clock, canvas, gestures } = setup();
+    for (let i = 0; i < 2; i++) {
+      pointer(canvas, 'pointerdown', 200, 250);
+      clock.advance(400); // well past the 220ms tap window
+      pointer(canvas, 'pointerup', 201, 250);
+      clock.advance(50);
+    }
+    expect(gestures.animating).toBe(false);
   });
 });

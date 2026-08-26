@@ -1,0 +1,83 @@
+# Run — builder:design-critic — 2026-08-26T17:19:53.052Z
+
+Captured verbatim by the SubagentStop hook: the handoff Builder sent, and the agent's complete output (its `## Thinking` and `## Result`).
+
+## Handoff
+
+**Critique the running Quarter Turn UI**
+
+Critique the running UI of Quarter Turn at **http://localhost:5973**. Project root is /Users/erickanney/builder/projects/quarter-turn — work only there.
+
+It is a 3x3x3 Rubik's cube PWA for an iPhone. **Set the viewport to 390x844** (design's reference device) before judging anything — at the pane's own default size the fixed grid has nowhere to go and you will be critiquing a squashed layout rather than the app.
+
+**Read the design system before you score it, so you critique what was intended and not what you would have done.** `src/interfaces/@brand/visual.md` (the grid, motion, the composition and its reasoning), `colors.md` (why the palette is what it is), `typography.md`, `voice.md`. Several things that look like mistakes are deliberate and argued for in there — the true-black field, the absence of any shadow, the chrome carrying no colour at all, square stickers with zero corner radius. If you disagree with one of those, argue with the reasoning rather than flagging it as an oversight.
+
+**Two harness facts that will otherwise waste your time.** The browser pane goes hidden between calls, `requestAnimationFrame` does not run in a hidden tab, and every animation here is rAF-driven — so screenshots are unreliable for motion, and a drag you perform may rotate a layer and never commit. That is the environment, not the app. There is a dev-only handle on `window.__quarterTurn` (`play(alg)`, `solve()`, `session()`, `solves()`) you can drive via javascript_tool to reach states without fighting the gesture layer; `get_page_text` and `read_page` work reliably regardless.
+
+**States worth reaching**, since the screen only changes by state: the idle scramble, mid-solve with a move log and a live timer, a finished solve with stage splits, a hinted solve (the PRACTICE qualifier), Competition mode (the covered scramble, the inspection countdown, the two hold pads), and the menu sheet with its record boards — both empty and populated. `qa` has been driving the app so there may already be solves recorded.
+
+Here are the acceptance scenarios tagged `@design-critic`. Quote them back verbatim and return PASS or FAIL with one line of evidence each:
+
+- The rendered cube reads as flat, saturated, hard-edged color, not glossy plastic
+- A personal best is always labelled as best single or best average, never an unqualified best time
+- The hint's known limitation — that it follows the solver's route, not the user's method — is stated where hints are offered
+- F2L, OLL, and PLL splits are shown labelled as CFOP-oriented stages
+
+Beyond those, score the whole thing against the rubric and run the detector. **The detector is currently clean** — I fixed 13 findings, including raising design's own 9px micro type step to the 11px floor, which is recorded with its reasoning in `typography.md`. If you find something the detector cannot see, that is the most valuable thing you can tell me.
+
+The one question I care most about: **this is an instrument someone uses one-handed, at arm's length, while concentrating on a puzzle.** Is anything on this screen going to be unreadable, mis-tappable, or in the way at the moment it matters? Fix-worthy usability beats aesthetic preference here.
+
+## Agent output
+
+## Thinking
+
+**Register.** Solve is a product surface wearing a brand surface's atmosphere — visual.md says so explicitly, and I judged it that way: state must be affirmative and controls must sit with what they govern, even though the screen is gorgeous. The sheets (Records/Daily/Patterns/Settings) are pure product surfaces and I held them to density/proximity/findability standards accordingly.
+
+**What I walked.** Booted at 390×844 per instruction, then also swept 375×667 (a real, still-current iPhone size) since the grid is a fixed-px stack and the brief asks me to sweep rather than trust one width. States reached via `window.__quarterTurn` (`play`, `solve`, `session`) plus real DOM `.click()` on buttons — the `computer` tool's click/drag consistently timed out against the hidden pane (documented harness behavior), so I drove state through the dev handle and verified rendering with screenshots + `getComputedStyle`/`getBoundingClientRect`, which is more reliable evidence than a screenshot alone for proximity/contrast/overlap claims anyway. I reached: idle scramble, running solve with live notation, a completed (unrecognised-CFOP) solve, a hinted solve, Competition covered→inspection→DNF, and the Menu sheet populated with real history from earlier `qa` runs plus my own.
+
+**Where reasoning and detector agreed/diverged.** The detector (`detect.mjs --json`) returned `[]` — genuinely clean, and I confirmed the only suppression present is the standing kit-wide `border-accent-on-rounded` waiver with its stated reason (`.impeccable/config.json`), nothing project-specific hiding anything. But my reasoned pass found five real issues the detector structurally cannot see: a contrast failure on functional text (I computed it: ink-32 `#4E545C` on void ≈ 2.7:1, below WCAG AA's 3:1 floor even for large text — the detector's `low-contrast` rule simply didn't fire on it), a competition-mode integrity leak, a missing IA layer, a missing destination screen, and a missing state-affirmation mark. All five are provable from computed styles and DOM structure, not aesthetic preference, and I checked each against the spec before calling it a finding rather than an argued decision. I also had two false starts I want to be honest about and retracted before reporting: I first misread the notation strip's overflow direction as reversed (it isn't — the pre-move "SCRAMBLE" label is correctly left-anchored while live notation is correctly right-anchored, two different, both-correct behaviors), and I misread token concatenation as missing spaces (screenshot evidence showed real spacing). Both dissolved under closer inspection, which is exactly why I checked before writing them up.
+
+**The decision test.** This screen clears it easily and I want to say so plainly: true-black void, zero-radius stickers, no gloss/shadow/AO anywhere, an alarm color borrowed from the palette itself rather than a seventh imported hue — a genuinely severe, committed point of view, more austere than either reference screen I opened (`33-focus-timer-session.png`, `55-meditation-player.png`, both of which lean on gradients/imagery/glow that this app explicitly refuses). The craft floor is cleared and the point of view is real. The gap here isn't taste — it's that several of the product-surface mechanics behind that beautiful shell (the sheet architecture, the PB affirmation, the competition cover, the About destination) aren't finished to the same standard as the Solve screen's hero moment.
+
+## Result
+
+**Verdict:** Slop pass (detector clean, genuinely — no hidden suppressions beyond the documented kit-wide waiver; zero gradient text, zero nested cards, zero AI-palette tells). Usability: **acceptable, not good** — heuristic total **27/40**. The Solve screen itself is close to excellent; the sheets and Competition mode behind it have real, fixable gaps that a cuber will hit within the first few minutes of exploring past the happy path.
+
+**Scenario verdicts:**
+- *"The rendered cube reads as flat, saturated, hard-edged color, not glossy plastic"* — **PASS.** Every screenshot shows flat per-face color, hard black grid lines, zero specular/gradient/AO; matches the view-space flat-shading spec exactly.
+- *"A personal best is always labelled as best single or best average, never an unqualified best time"* — **PASS.** Confirmed headers read "BEST SINGLE" / "BEST AVERAGE" throughout Records and History; no unqualified "best time" or bare "PB" appears anywhere.
+- *"The hint's known limitation... is stated where hints are offered"* — **PASS.** Tapping HINT reveals a card reading `B2` / `SOLVER'S ROUTE` directly beneath the move token, exactly per web.md.
+- *"F2L, OLL, and PLL splits are shown labelled as CFOP-oriented stages"* — **FAIL.** F2L and OLL do carry the `CFOP` scope tag, but no split anywhere is labeled `PLL` — the fourth column is `SOLVED`. That's arguably the right data (OLL→Solved *is* the PLL interval), but the label itself never appears on the Solve screen, and the Settings→About copy (`web.md`) explicitly calls it "the Cross, F2L, OLL and PLL splits," so the scenario as literally worded isn't met and the spec now disagrees with itself.
+
+**What's working:**
+- The signature object. True-black void, zero-radius stickers, no gloss anywhere — a sharper, more committed decision than either close reference screen I pulled (the meditation player and focus-timer session both lean on glow/gradient/imagery this app refuses). This clears the decision test outright.
+- The timer's state language (idle→running→stopped→DNF, all color-and-fill, no text) and the refusal/1400ms-message pattern are exactly as specified and read at a glance.
+- Proximity discipline where it was applied: move count sits beside Undo (not under the timer), `PRACTICE` sits permanently on the HINT button before it's tapped, the qualifier line sits touching the number it disqualifies.
+
+**Priority issues:**
+
+- **P1 — Competition's "covered" scramble doesn't cover anything.** `session().phase.kind === "covered"` while the cube renders its true, fully-colored scrambled state; the "REVEAL SCRAMBLE" control is a single opaque button measuring 180×47px against a 390×524px stage — about 4% coverage. A cuber who switches to Competition mode sees the entire scramble before ever tapping Reveal, which defeats the one thing "covered" inspection exists to prevent, on a feature whose own copy claims to "play by the WCA Regulations... wherever a real cube would." Fix direction: actually obscure the rendered cube (silhouette/blank state) until Reveal, not just overlay a label.
+- **P1 — The About/Settings destination does not exist.** I opened the Menu sheet and read its full content top to bottom (`get_page_text`): Records, Daily, Patterns, History, Colours, Sound — and nothing else. No "About," no "WCA Regulations" text anywhere in the DOM. Every scope tag in this app (`CFOP`, `NOT WCA`, `PRACTICE`) is designed as a one-line admission that defers its full explanation to exactly one place (voice.md: "the full, unhurried explanation lives in exactly one place"). That place isn't reachable. The one-line-honesty contract the whole voice system depends on is currently a promise with no destination.
+- **P1 — Personal best carries no visual mark at all.** visual.md requires "a 3px pure-white bar down its left edge, full row height, and its value in pure white." I checked the actual PB row's computed style: `border-left: 0px none`, value color `rgb(201,205,211)` (ink-80, the same as every other row), no `::before`/`::after`. The only differentiator is the rank number "1" — a Heuristic-1 (visibility of system status) failure on the one row whose entire job is to be unmistakable.
+- **P1 — Menu is one ever-growing undifferentiated scroll, not the specified sheet.** visual.md calls for a segmented control (`FASTEST | FEWEST MOVES | HISTORY`) with three affirmative marks on the active tab. What's built is a single `.sheet__body` (verified: no tab/segment buttons exist in the DOM at all) that concatenates Records → Daily → Patterns → full History → Colours → Sound under a header that literally reads "RECORDS." Colours and Sound — the only two settings in the app — sink further beneath the fold with every solve logged; at 16 solves the sheet was already ~1150px taller than its viewport. This is a recognition-over-recall failure that gets *worse* with use, which is the wrong direction for a settings surface.
+- **P1 — Scope-tag text fails contrast, and the detector can't see it.** `CFOP` and `PRACTICE` render at `#4E545C` (ink-32) on `#000000` ≈ **2.7:1**, below WCAG AA's 3:1 floor even for large text. This isn't me second-guessing an argued palette choice: colors.md itself reserves ink-32 for text "never... that must be read, only... seen to exist," while typography.md's own 2026-08-26 correction argues these exact instances *must* be read ("the last text in the product that should be hard to read") and fixed the size (9→11px) without revisiting the color. The fix is half-done. I confirmed this is genuinely detector-blind: `detect.mjs --json` against the live idle screen (which already renders both strings) returned `[]`.
+
+- **P2 — Bottom-of-stage chrome collides with itself.** The "Add to Home Screen" install-note (`.install-note`, absolutely positioned inside `.stage`, y 654–716) and the Competition hold-zone (`fixed`, y 696–844) overlap by 20px — confirmed in two separate screenshots, the toast's second line ("edge swipe fights the cube.") visibly clipped by the hold-zone's opaque edge. The same toast also overlaps the cube's own silhouette at 375×667 (a real, still-sold iPhone size), because nothing reserves space for it against other bottom-anchored content.
+- **P2 — Internal terminology drift: "SOLVED" vs "PLL."** Same root cause as the scenario FAIL above — worth fixing regardless of how the scenario is ultimately scored, since voice.md names exactly this kind of drift as "a legitimacy leak."
+- **P2 — Hold-zone circles have no first-run label.** web.md specifies "HOLD BOTH TO START" should appear "the first few times" since nothing else explains two blank circles. It never appeared in a fresh session.
+- **P3 — First-run overlay never renders.** Verified with `localStorage`/`sessionStorage` genuinely empty; web.md's "Drag a sticker to turn that layer" two-line overlay simply doesn't fire. Low real-world cost given the target persona already knows the one possible gesture, but confirmed missing.
+
+**Persona red flags:**
+- **Alex (power user):** starting a casual solve is instant (cube's already scrambling on load, &lt;1s to first turn) — excellent. But checking "is sound on" six months in means scrolling past an unbounded history log first — the exact opposite of a &lt;60s power-user task.
+- **Sam (accessibility):** `CFOP`/`PRACTICE` at ~2.7:1 fails WCAG AA outright, on text the app's own spec calls an "honesty admission" that must be legible, not decorative.
+- **Riley (stress / mid-concentration):** a real competitor toggling to Competition mode mid-session sees their own scramble in full color before Reveal — for someone trying to run an honest mock-inspection, that's the one thing this mode cannot do.
+
+**Scores (Nielsen, 0–4):**
+Visibility of system status **2** · Match with real world **3** · User control/undo **4** · Consistency/standards **2** · Error prevention **3** · Recognition over recall **1** · Flexibility/efficiency **3** · Aesthetic/minimalist **4** · Error recovery language **4** · Help/documentation **1** → **27/40 (acceptable band)**. Cognitive load: moderate (2 fails — Menu's ungrouped scroll, PB requiring recall not recognition). Detector: **0 findings**, one documented kit-wide waiver, no undisclosed suppressions.
+
+**Questions to consider:**
+- Was the Menu's segmented control cut for time, or was "one long scroll" a deliberate simplification? If deliberate, how is Colours/Sound meant to stay reachable once History has hundreds of rows?
+- Is the About screen simply not built yet, or was it descoped? Either way, every scope tag in the product is currently a claim with no place to verify it.
+- Was "covered" scoped as "show a Reveal button" as a placeholder for a later real concealment pass, or was the WCA-fidelity framing in About/flows.md aspirational from the start?
+
+Relevant paths: `/Users/erickanney/builder/projects/quarter-turn/src/interfaces/@brand/visual.md`, `colors.md`, `typography.md`, `/Users/erickanney/builder/projects/quarter-turn/src/interfaces/web.md`, `flows.md`, `/Users/erickanney/builder/projects/quarter-turn/src/app.md`, `/Users/erickanney/builder/projects/quarter-turn/src/roadmap/mvp.md`, `/Users/erickanney/builder/projects/quarter-turn/.impeccable/config.json`.

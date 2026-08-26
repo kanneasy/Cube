@@ -53,7 +53,7 @@ button {
     max(env(safe-area-inset-top), 12px)
     var(--size-rail)
     var(--space-8)
-    var(--size-readout)
+    124px
     minmax(320px, 1fr)
     var(--size-notation)
     var(--space-8)
@@ -73,16 +73,15 @@ button {
   justify-content: space-between;
 }
 
+/* Status, not a control -- so it drops the fill, the border and the pure-white ink it
+   carried while it was a button. It still says the mode at a glance, which is the whole
+   job; it just stops competing with the cube for the top of the screen. */
 .chip {
   height: 28px;
-  padding-inline: var(--space-12);
-  background: var(--color-graphite);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-control);
   font-size: var(--type-size-label);
   font-weight: var(--type-weight-label);
   letter-spacing: 0.12em;
-  color: var(--color-ink);
+  color: var(--color-ink-56);
   display: inline-flex;
   align-items: center;
 }
@@ -104,14 +103,14 @@ button {
 
 .readout {
   display: grid;
-  grid-template-rows: 68px var(--space-8) var(--size-qualifier) var(--space-8) var(--size-splits);
+  grid-template-rows: 52px var(--space-8) var(--size-qualifier) var(--space-8) 38px;
   align-content: start;
 }
 
 .timer {
   font-family: var(--type-family-display);
   font-size: var(--type-size-timer);
-  font-weight: 800;
+  font-weight: 500;
   line-height: var(--type-leading-timer);
   letter-spacing: var(--type-tracking-timer);
   font-variant-numeric: tabular-nums;
@@ -181,9 +180,9 @@ button {
 
 .split__value {
   font-family: var(--type-family-mono);
-  font-size: var(--type-size-data);
+  font-size: var(--type-size-small);
   font-variant-numeric: tabular-nums;
-  color: var(--color-ink-80);
+  color: var(--color-ink-56);
   margin-top: 3px;
 }
 
@@ -361,7 +360,7 @@ button {
 .inspection__number {
   font-family: var(--type-family-display);
   font-size: var(--type-size-timer);
-  font-weight: 800;
+  font-weight: 500;
   line-height: var(--type-leading-timer);
   letter-spacing: var(--type-tracking-timer);
   font-variant-numeric: tabular-nums;

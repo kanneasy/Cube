@@ -31,10 +31,38 @@ stays honest.
 ~~~ camera
 fov: 28deg vertical, perspective projection
 target: cube center at origin
-default view: azimuth +45deg, elevation +24deg  (shows U, F and R)
-framing: the cube's projected bounding box is 78% of the stage's width
-No camera roll, ever. The horizon of the cube stays level.
+
+The camera NEVER moves and never rotates. It sits at (0, 0, distance), up (0, 1, 0),
+looking at the origin. ALL orientation lives in the cube's own quaternion; zoom is the
+only thing that touches `distance`. This is what keeps the shading ramp anchored to the
+screen and what removes gimbal lock from the orbit -- see "Orbiting and zooming".
+
+Default pose, the first frame of every launch -- the three-quarter view showing U, F, R:
+  q_default = Rx(+24deg) * Ry(-45deg), applied to the cube (Ry first, then Rx)
+  Check: U's normal lands at view-space (0, 0.9135, 0.4067),
+         F at (-0.7071, -0.2876, 0.6459), R at (0.7071, -0.2876, 0.6459).
+
+Framing is measured on a ROTATION-INVARIANT quantity. A free-rotating cube's projected
+bounding box swings from 3.0 to 5.196 world units with pose, so framing on it would make
+the cube breathe as it turned.
+  S = the on-screen size of ONE WORLD UNIT at the cube's centre depth, in CSS px
+      S = (stage height px / 2) / (distance * tan(fov / 2))
+  D = 3S = the cube's on-screen FACE WIDTH -- how wide a face reads seen straight on.
+  f = D / stage width px.   Resting f = 0.55.
+  => distance = 1.5 * (stage height px) / (f * stage width px * tan 14deg)
+
+On the 390x844pt reference device (stage 342 x 471px): S = 62.9px, D = 189px,
+distance = 15.06. At the default pose that puts the projected silhouette at 78% of the
+stage width -- identical to the framing this spec carried before, restated in a form that
+survives free rotation.
 ~~~
+
+**The camera never rolls; the cube can end up rolled, and that is fine.** A screen-space
+trackball composes rotations that do not commute, so a loop of drags leaves the cube
+visibly twisted. On an object with a canonical up that would be a defect. A cube has 24
+identical orientations and no up, so a "rolled" pose is just a pose. What matters is that
+the *camera* stays level, because the value ramp below is anchored to it: top is bright
+and bottom is dark on screen no matter what the cube is doing.
 
 **Geometry.**
 
@@ -60,31 +88,56 @@ stays anchored to the screen while the cube orbits. That is the trick that keeps
 reading as a graphic rather than as a lit object.
 
 ~~~ face-shading
-Per-axis multipliers, in view space:
+STICKER ramp -- per-axis multipliers, in view space:
   up      1.00
   toward  0.88
-  left    0.82
-  right   0.76
-  away    0.76
-  down    0.70
+  left    0.84
+  right   0.72
+  away    0.72   (never used: an away-facing sticker is back-facing and culled)
+  down    0.66
 
-For an arbitrary face normal N (view space), blend by the squared positive components:
+For an arbitrary face normal N (view space), blend by the SQUARED positive components:
   k = SUM over the 6 signed axes of ( max(0, dot(N, axis))^2 * k_axis )
 Exactly three axes can be positive and their squares sum to 1, so this is exact at the
-axes and smooth between them.
+axes, smooth between them, and needs NO normalising divide. An implementation that blends
+by the raw components and divides by their sum is a different, flatter interpolation --
+it agrees only at the axes, and free rotation makes off-axis normals the common case.
 
 Apply k in LINEAR light, not on the sRGB byte values:
   linear = srgb_to_linear(base); shaded = linear_to_srgb(linear * k)
 
 Worked example, Verde #0BC25E:
   k = 0.88  ->  #0AB758
-  k = 0.76  ->  #08AC52
+  k = 0.84  ->  #09B356
+  k = 0.72  ->  #08A750
 Implementations that multiply the hex bytes directly will land a few points off and
-desaturate; check against these two values.
+desaturate; check against these three values.
 
-On the Universal palette the ramp compresses to 1.00 / 0.94 / 0.88 / 0.86 / 0.86 / 0.84,
-because that palette encodes information in lightness and a wide ramp would eat it.
+BODY ramp -- the plastic takes the same view-space blend with its OWN, much wider
+multipliers, applied to --color-body (#141518) in linear light:
+  up 3.00  toward 1.90  left 1.50  right 0.90  away 0.90  down 0.50
+  ->  #28292E / #1E2024 / #1A1B1F / #131416 / #131416 / #0B0C0E
+Identical on BOTH palettes. The body is achromatic and carries no palette information, so
+nothing is lost by giving it a wide ramp -- and it is the only form cue that survives the
+Universal palette's compressed sticker ramp. Implementation: the cubie box takes an array
+of six materials indexed by local face, shaded in the same per-frame loop as the stickers
+(26 x 6 = 156 colour writes, negligible).
+
+While CONCEALED (competition inspection) the body ramp is NOT applied: the plastic renders
+flat at #141518 and every sticker renders at body x 1.9 x k_sticker, exactly as before.
+Ramping both would put the inset lighter than the sticker and invert the grid.
+
+On the Universal palette the STICKER ramp compresses to 1.00 / 0.94 / 0.88 / 0.86 / 0.86 /
+0.84, because that palette encodes information in lightness and a wide ramp would eat it.
 ~~~
+
+**Why the sticker ramp widened.** The old ramp separated the two side faces of a
+three-quarter view by only 3.6% (0.835 vs 0.805) -- two adjacent same-coloured faces
+nearly merged, at the *default* pose, before free rotation was even on the table. The
+revision puts them 7.1% apart (0.842 vs 0.782), and holds that separation through the two
+poses free rotation newly makes reachable: edge-on reads 0.86 / 0.80 and corner-on reads
+0.96 / 0.823 / 0.763. Face-on is the one pose with no separation to give -- a single face
+fills the silhouette -- and there the body ramp and the 3x3 grid are what say "cube."
 
 No gloss, no specular, no environment map, no ambient occlusion, no bloom, no post
 effects. If a rendering technique makes it look more like plastic, it is wrong.
@@ -111,7 +164,17 @@ This is the single most important feel decision in the app; if it is wrong, noth
 matters.
 
 ~~~ turn-follow
-gain: a drag of 0.42 x (the cube's on-screen edge length) along the layer's tangent = 90deg
+gain: 90deg per   1.06 * S * max(0.62, |t|)   px of drag along the layer's screen tangent.
+  S is from the camera block. |t| is the SCREEN-PROJECTED LENGTH of that unit tangent --
+  1.0 when the tangent lies in the screen plane, 0 when it points at the camera. Read it
+  off the same projection that resolves the axis, before that vector is normalised.
+  At the default pose |t| ~ 0.91, so a quarter turn is ~61px on the reference device: the
+  same drag the old "0.42 x on-screen edge length" rule produced there.
+  The 0.62 floor is a guard. A face turned nearly edge-on has |t| -> 0 and an uncompensated
+  1:1 gain explodes; the clamped orbit could not reach that pose, a free one can. Worst
+  case is now 41px per quarter turn -- brisk, never wild.
+  DELETE screenEdgeLength(). It measures one specific world edge, which under free rotation
+  can point straight at the camera and project to zero pixels.
 clamp: +/-180deg of live rotation
 axis resolution: a sticker gives exactly two valid tangents; take the one with the larger
   projection of the first 8px of travel, then lock it for the rest of the gesture
@@ -187,31 +250,154 @@ Message: one line of Supreme 700 11px/0.12em uppercase in --color-ink-56, in the
   the strip's height is already reserved. (Copy is voice-writer's.)
 ~~~
 
-### Orbiting the view
+### Orbiting and zooming the view
 
-A drag that begins on the background rotates the whole cube. **A rotation is not a move
-under OBTM, is never logged, and never starts the clock — so it is also silent.** That is
-the rule: *sound means the puzzle changed.*
+**This section supersedes the "Orbiting the view" block of 2026-08-26, which clamped pitch
+to ±72° and settled every orbit onto one of eight canonical three-quarter views.** Both
+were built to protect sticker readability. On a real iPhone both read as the app refusing
+to move: the clamp is a wall you hit mid-drag with no explanation, and the snap takes the
+pose away from you the moment you stop. The readability concern was real and it has been
+moved to where it actually belonged — the value ramp above, which now separates the two
+side faces of any three-face pose by 7.1% instead of 3.6%, at *every* orientation rather
+than at eight of them. Free rotation and a shading fix; not a clamp and a snap.
 
-~~~ orbit
-Follow: 1:1, no smoothing.
-  horizontal drag of 0.55 x viewport width = 180deg of yaw
-  vertical   drag of 0.55 x viewport width = 180deg of pitch, clamped to +/-72deg
-  (the clamp exists so the user never ends up edge-on and disoriented)
+A one-finger drag that begins on the background rotates the whole cube. Two fingers rotate
+*and* zoom it from anywhere, including from on top of the cube. **Neither a rotation nor a
+zoom is a move under OBTM, neither is ever logged, and neither starts the clock — so both
+are silent.** That is the rule: *sound means the puzzle changed.*
+
+**The trackball.** Screen-space, position-independent, quaternion. Where on the background
+the drag starts is irrelevant — the drag *direction* picks the axis and the drag *length*
+picks the angle, so there is no dead zone, no pole, no gimbal lock, and no wall.
+
+~~~ trackball
+Follow: 1:1, no smoothing, exactly like a layer turn.
+  axis  (view space, = world space, since the camera never rotates):
+        normalize( dy_client, dx_client, 0 )      -- screen y is DOWN
+  angle:  hypot(dx, dy) px  *  (180deg / D)       -- D from the camera block
+  compose on the LEFT:  q <- deltaQ * q .  Renormalise q every frame.
+
+  So a drag equal to the cube's own on-screen face width turns it half way around.
+  On the reference device at the resting zoom that is 189px per 180deg -- 0.95deg/px,
+  within 1% of the horizontal feel the old yaw drag had. Because the gain is expressed in
+  the cube's on-screen units, zooming in makes the cube heavier to spin and zooming out
+  makes it lighter. That is the same rule the turn gain already follows, and it is
+  physically honest: a bigger object under the same thumb turns less.
+
+  NO clamp. NO pole. NO snap. NO settle. The cube rests exactly where you left it.
 
 Momentum on release:
-  omega(t) = omega_0 * e^(-t / 260ms), cut off below 12deg/s
-  a 900deg/s flick carries about 230deg over roughly 700ms
+  omega_0: total rotation over the LAST 60ms of pointer history / 60ms, about the axis of
+    the summed drag over that same window. Fewer than two samples in the window -> zero.
+    Never take a single final frame delta: on iOS the last pointermove before lift often
+    carries a 2ms dt and a jitter pixel, which reads as a violent unintended flick.
+  omega(t) = omega_0 * e^(-t / 400ms), about a screen-fixed axis
+  cut off below the rate 26 px/s of drag would produce (24.8deg/s at the resting zoom)
+  => a 900deg/s flick carries 360deg -- exactly one revolution -- and comes to rest in
+     about 1.45s.
+  A slow deliberate drag releases below the cutoff and simply stops. That is the promise:
+  put it somewhere and it stays there.
 
-Settle -- the decision: the orbit always lands on one of EIGHT canonical three-quarter
-views. Once momentum falls under the cutoff:
-  yaw   eases to the nearest of 45 / 135 / 225 / 315 deg
-  pitch eases to the nearest of +24 / -24 deg
-  spring: { stiffness: 180, damping: 24, mass: 1 } -> damping ratio 0.89, ~340ms, 0.4% overshoot
-Every one of those eight poses shows three faces cleanly. A free-floating orbit leaves the
-cube in oblique poses where stickers are foreshortened and unreadable at speed; snapping
-means the cube is never left in a pose you cannot solve from.
+  ANY pointerdown kills momentum on the same frame. That is the release valve that lets
+  the glide be long: flick it, watch it spin, touch it and it is dead still. If that
+  pointerdown lands on a sticker, the turn begins from the stopped orientation.
 ~~~
+
+**Pinch to zoom.** Zoom is a preference about how big you like the cube, not a state of
+the puzzle, and it behaves like one.
+
+~~~ zoom
+Range, expressed as f = the cube's on-screen face width / stage width (see the camera
+block). Log-symmetric about the rest, +/- 1.72x, 2.9x end to end:
+  f_min   0.32   (D = 109px on the reference device; a small precise object in a big room)
+  f_rest  0.55   (D = 189px; today's framing, unchanged)
+  f_max   0.94   (D = 321px; a face seen head-on nearly spans the stage)
+
+Follow: 1:1, no smoothing, no momentum.
+  f_target = f_at_pinch_start * (current two-pointer span / span at pinch start)
+  Pinch NEVER has momentum. Rotation coasts because a real cube spins; scale does not fly
+  toward your face, the range is only 2.9x, and drifting into a limit you did not ask for
+  is the exact complaint this correction exists to fix. The pinch stops when you stop.
+
+At both limits: RUBBER-BAND, then settle back. Not a hard stop. A hard stop is
+indistinguishable from a frozen app on a device with no haptics -- the same argument the
+refusal spec already makes, so it reuses the refusal's shape and its spring.
+  live, in log space, with u = ln(f_raw / f_limit) and r = 0.16:
+    f = f_limit * exp( sign(u) * r * (1 - e^(-|u| / r)) )
+    -> an asymptotic ceiling of 17% past either limit, reached by pulling and never by
+       accident
+  release: spring back to f_limit -- { stiffness: 700, damping: 34, mass: 0.5 }
+    operating on ln(f). Damping ratio 0.91, ~130ms, no bounce. (This is the refuse spring.)
+  silent, like every other view change.
+
+Persistence: zoom PERSISTS -- across scrambles, across solves, and across launches, stored
+with the settings in IndexedDB. Someone who zoomed in because the stickers were small
+wants it zoomed in tomorrow; resetting it every scramble would be the app overruling a
+deliberate choice, which is the whole class of thing being corrected here.
+Orientation does NOT persist across launches: it resets to q_default. It is transient
+working state rather than a preference, the first frame of a launch is the brand ("a cube
+in a black room, already scrambled, already waiting"), and a scramble is defined from
+white-top / green-front, so opening there makes the notation strip match what you see.
+A new scramble mid-session changes neither.
+
+The camera's `distance` follows f directly, so perspective strengthens as you zoom in:
+half-diagonal / distance runs 10% at f_min to 29% at f_max. Zoomed out it reads flatter
+and more diagrammatic, zoomed in more like an object in your hand. That is a property to
+keep, not a defect to correct.
+~~~
+
+**Two fingers, always.** At f_max the cube fills the stage and there is no background left
+to grab, so background-only orbit would strand the user at exactly the zoom where they most
+need to turn it. With two pointers down, the midpoint's translation orbits at the trackball
+gain and the span's ratio zooms, **simultaneously** — the standard map gesture, so orbit is
+reachable at any zoom, over any pixel. Re-baseline midpoint and span at the instant the
+second finger lands, so upgrading from a one-finger orbit is seamless. A second finger
+arriving during a live *turn* is ignored outright: the turn owns the gesture until the
+first finger lifts. Predictable beats clever, and a surprise commit is unforgivable here.
+
+**Getting home.** With no snap there is no implicit reset, so there is an explicit one —
+double tap, placed directly on the thing it controls, which is the strongest proximity
+available and costs the stage no chrome.
+
+~~~ view-reset
+Double tap anywhere in the stage -- on the cube or on the background, since at f_max there
+is no background. A "tap" is pointerdown to pointerup within 220ms and under 8px of travel,
+which is below the axis-lock threshold, so a tap can never have committed a turn. Two of
+them, the second beginning within 280ms of the first ending.
+  -> quaternion SLERP to q_default and lerp f to 0.55, both over 260ms
+     cubic-bezier(0.16, 1, 0.3, 1). Shortest arc. Silent.
+  Suppressed while the auto-scramble is animating -- a tap there already means "jump to
+  the end state."
+~~~
+
+It is taught twice rather than given a control, because a control here would be the only
+action row in a sheet of destinations and the only chrome ever added to the stage. First,
+the first-run overlay gains a third line, beside the two it already carries about dragging
+a sticker and dragging the background. Second, once per session, the first time the view
+is rotated past 90deg or zoomed past 10% **while the clock is idle**, the notation strip's
+reserved slot carries a one-line hint for 1400ms -- the refusal message's slot, timing and
+treatment exactly. No new chrome, no layout shift, never during a running solve. (Both
+lines are voice-writer's.)
+
+The reset is a convenience, not a recovery: the cube is never *stuck*, only in a pose you
+did not want, and one drag always fixes that. That is why it does not earn chrome.
+
+**What is lost, honestly.** The eight canonical poses guaranteed you were never looking at
+the cube from somewhere useless. That guarantee is gone and nothing cheap brings it back
+without taking the pose away from the user again — a "slight bias toward a readable pose"
+is still the app moving the cube after you stopped, which is the complaint, only quieter
+and harder to explain. So: **nothing settles.** What survives of the concern is the wider
+value ramp, which does more than the snap did because it works at every orientation rather
+than eight, and which improves the default pose the app has always opened on. The one pose
+with genuinely no shading answer is dead face-on, where a single face fills the silhouette
+and the cube reads flat — and that one is self-correcting, because it is also the pose you
+can see least of and the first thing anyone does is turn it back.
+
+One consequence to hold: the grab acknowledgement lifts stickers to `k × 1.06` **clamped at
+1.0**, so a layer grabbed on the up face gets no lift at all. Free rotation makes any face
+reachable as the up face, so that hole is now common rather than rare. **The 1px hairline
+tracing the layer boundary is therefore the load-bearing acknowledgement and must never be
+conditional.** With no haptics it is the only proof the touch registered.
 
 ### Undo
 
@@ -261,11 +447,13 @@ Tapping anywhere jumps to the end state instantly.
 ### Reduced motion
 
 `@media (prefers-reduced-motion: reduce)`: turn snaps become 90ms linear with no
-overshoot; orbit momentum τ goes to 0 (the cube stops when the finger lifts) and the
-canonical settle runs 160ms linear; the stop flourish and the splits stagger are removed
-and the splits appear at once; timer state changes are instant; the auto-scramble
-resolves in one step. **Sound is unaffected** — with no haptics available, audio is the
-accessibility affordance here, not the thing being reduced.
+overshoot; orbit momentum τ goes to 0, so the cube stops the frame the finger lifts; the
+zoom rubber-band still stretches live (it is the only feedback a limit gets) but returns
+over 120ms linear instead of on the spring; the double-tap view reset is instant, with no
+slerp; the stop flourish and the splits stagger are removed and the splits appear at once;
+timer state changes are instant; the auto-scramble resolves in one step. **Sound is
+unaffected** — with no haptics available, audio is the accessibility affordance here, not
+the thing being reduced.
 
 ## Chrome
 
@@ -334,7 +522,12 @@ opening anything, and tapping the chip is how you change it. Right: `MENU` in `l
   `—` with the labels intact, and the Solve detail sheet explains why.
 
 **Stage (1fr).** Nothing but the cube. No grid, no glow, no vignette, no floor, no
-reflection. The cube never touches or passes under any chrome.
+reflection. **The cube never draws outside the stage** — the canvas is the stage's exact
+box, so it clips there and can never touch or pass under the readout or the notation
+strip. Within the stage it is free: at the resting zoom the worst-case silhouette across a
+body diagonal is 327px on the reference device, which still leaves a 31px margin to the
+viewport edge, and zoomed in past that the cube is simply cropped by the stage. Cropping
+under a deliberate pinch is expected and correct; it is what every zoom surface does.
 
 **Notation strip (32px).** One line of `notation` type in `--color-ink-56`,
 **right-aligned and overflowing to the left**, with a 32px left fade
@@ -493,3 +686,32 @@ no screen renders, so it describes the template rather than this app. Nothing is
 by that -- unused modules are tree-shaken out of the bundle -- but anyone running
 `design-sync` should expect the gallery to need repointing at the real chrome
 (`.control`, `.chip`, `.board`, the hold pads, the splits row) before it means anything.
+
+
+## Correction: the resting zoom, and the readout's weight
+
+Set 2026-08-26, at the user's direction after holding the app on a real iPhone.
+
+**Resting zoom is f = 0.40, not 0.55.** The trackball correction above solved for a
+resting framing that reproduced the old silhouette exactly at the DEFAULT pose. But a
+free-rotating cube's silhouette swings from 3.0 to 5.196 world units, and at f = 0.55
+the corner-on pose reaches 95% of the stage width -- eight pixels of background each
+side. The gesture that orbits the cube needs somewhere to start, and there was nowhere.
+At 0.40 the worst pose sits at 69% and leaves 53px, which is a thumb.
+
+The zoom RANGE keeps its far end and its shape: f_min 0.24, f_rest 0.40, f_max 0.94.
+It is no longer log-symmetric about the rest, deliberately -- there is more call to zoom
+in on a small sticker than to push a cube that is already comfortably framed further
+away.
+
+**The readout steps back.** The timer drops from `clamp(4rem, 19vw, 5.25rem)` at weight
+800 to `clamp(2.5rem, 12vw, 3.25rem)` at weight 500; the splits row's values drop from
+`data` at ink-80 to `small` at ink-56; the reserved readout row goes from 148px to 124px
+and the splits row from 44px to 38px. The mode chip loses its fill, its border and its
+pure-white ink entirely -- it stopped being a button in the same pass, and a status that
+looks like the loudest control on the screen was reading as one.
+
+The hierarchy underneath is unchanged: the timer still goes from ink-56 idle to pure
+white running, the qualifier still sits against the number it disqualifies, and every
+label still clears the 11px legibility floor and the 3:1 contrast floor. What changed is
+how much of the screen the chrome asks for, against a cube that is the actual subject.

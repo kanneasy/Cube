@@ -10,12 +10,22 @@
 import { Vector3 } from 'three';
 import { TURNS, type Move, type TurnBase, type Vec3 } from '../../cube/state';
 import type { CubeRenderer } from './renderer';
+import { defaultOrientation, ZOOM_MAX, ZOOM_MIN, ZOOM_REST, ZOOM_RUBBER_R } from './renderer';
 import { prefersReducedMotion, REDUCED_SETTLE_MS } from './motion';
 
 const DEG = Math.PI / 180;
 
-/** A drag of this fraction of one on-screen cube edge, along the tangent, is 90 degrees. */
-const TURN_GAIN = 0.42;
+/**
+ * A quarter turn per `TURN_GAIN * S * max(TANGENT_FLOOR, |t|)` px of drag along the
+ * layer's screen tangent, where S is one world unit in px and |t| is how much of that
+ * tangent survives projection -- 1 in the screen plane, 0 pointing at the camera.
+ *
+ * The floor is a guard, and free rotation is what made it necessary. A face turned
+ * nearly edge-on has |t| approaching zero, and an uncompensated 1:1 gain explodes; the
+ * clamped orbit could never reach that pose and a free one can.
+ */
+const TURN_GAIN = 1.06;
+const TANGENT_FLOOR = 0.62;
 /** Live rotation is clamped so a runaway drag cannot spin a layer indefinitely. */
 const LIVE_CLAMP = 180 * DEG;
 /** Travel before the rotation axis is resolved and then locked for the gesture. */
@@ -23,10 +33,21 @@ const AXIS_LOCK_PX = 8;
 /** Release angular speed at or above which a flick fires in the direction of travel. */
 const FLICK_RAD_PER_S = 900 * DEG;
 
-/** Orbit: a drag of this fraction of viewport width is 180 degrees, on either axis. */
-const ORBIT_GAIN = 0.55;
-const ORBIT_DECAY_MS = 260;
-const ORBIT_CUTOFF = 12 * DEG;
+const ORBIT_DECAY_MS = 400;
+/** Below the rotation this rate of drag produces, momentum simply stops. */
+const ORBIT_CUTOFF_PXPS = 26;
+/**
+ * Momentum reads the last 60ms of pointer history, never a single final frame. On iOS
+ * the last pointermove before a lift routinely carries a 2ms dt and a jitter pixel,
+ * which as a one-frame velocity reads as a violent flick nobody asked for.
+ */
+const VELOCITY_WINDOW_MS = 60;
+
+/** A tap: short, and under the axis-lock threshold, so it can never have turned a layer. */
+const TAP_MAX_MS = 220;
+const TAP_MAX_PX = 8;
+const DOUBLE_TAP_MS = 280;
+const VIEW_RESET_MS = 260;
 
 /** Pinch travels a little before it engages, so resting two fingers is not a zoom. */
 const PINCH_THRESHOLD_PX = 12;
@@ -51,6 +72,8 @@ interface TurnDrag {
   base: TurnBase;
   /** Screen-space unit vector, y-up, along which dragging turns the layer clockwise. */
   tangent: { x: number; y: number };
+  /** How much of that unit tangent survived projection. Feeds the gain. */
+  tangentLength: number;
   startX: number;
   startY: number;
   angle: number;
@@ -72,17 +95,22 @@ interface OrbitDrag {
   kind: 'orbit';
   lastX: number;
   lastY: number;
-  lastTime: number;
-  /** Radians per second about the screen's own right and up axes. */
-  velocityRight: number;
-  velocityDown: number;
+  /** Recent pointer samples, for a windowed release velocity. */
+  history: { t: number; x: number; y: number }[];
 }
 
-/** Two fingers: the cube stops turning and starts scaling. */
+/**
+ * Two fingers scale AND orbit at once, over any pixel.
+ *
+ * They have to. Zoomed all the way in the cube fills the stage and there is no
+ * background left to grab, so a background-only orbit would strand the user at exactly
+ * the zoom where turning it matters most.
+ */
 interface PinchDrag {
   kind: 'pinch';
-  startDistance: number;
+  startSpan: number;
   startZoom: number;
+  lastCentroid: { x: number; y: number };
   engaged: boolean;
 }
 
@@ -127,18 +155,18 @@ export function resolveAxis(
   normal: Vec3,
   dragX: number,
   dragY: number,
-): { base: TurnBase; tangent: { x: number; y: number } } | null {
+): { base: TurnBase; tangent: { x: number; y: number }; tangentLength: number } | null {
   const coords = renderer.cubieCoords(cubieIndex);
   // Pointer y grows downward; flip it so both sides of the dot product are y-up.
   const drag = { x: dragX, y: -dragY };
 
-  let best: { base: TurnBase; tangent: { x: number; y: number }; score: number } | null = null;
+  let best: { base: TurnBase; tangent: { x: number; y: number }; tangentLength: number; score: number } | null = null;
 
   for (let axis = 0; axis < 3; axis++) {
     if (normal[axis] !== 0) continue; // a rotation about the sticker's own normal spins it in place
     const motion = cross(AXES[axis], coords);
     if (motion.every((v) => v === 0)) continue;
-    const screen = renderer.projectDirection(coords, motion);
+    const screen = renderer.projectTangent(coords, motion);
     const base = baseFor(axis, coords[axis]);
     if (!base) continue;
 
@@ -148,15 +176,28 @@ export function resolveAxis(
     const flip = TURNS[base].negIsCw ? -1 : 1;
     const tangent = { x: screen.x * flip, y: screen.y * flip };
     const score = tangent.x * drag.x + tangent.y * drag.y;
-    if (!best || Math.abs(score) > Math.abs(best.score)) best = { base, tangent, score };
+    if (!best || Math.abs(score) > Math.abs(best.score)) {
+      best = { base, tangent, tangentLength: screen.length, score };
+    }
   }
 
-  return best ? { base: best.base, tangent: best.tangent } : null;
+  return best ? { base: best.base, tangent: best.tangent, tangentLength: best.tangentLength } : null;
 }
 
 export class CubeGestures {
   private drag: Drag = null;
   private animation = 0;
+  /** Tracked apart from `animation` so a touch can kill a glide without killing a snap. */
+  private momentum = 0;
+  /**
+   * -Infinity, not 0. Starting at zero makes the very FIRST tap look like the second
+   * half of a double tap whenever the clock is near zero -- masked in the app because
+   * performance.now() is large by then, and caught immediately by a test clock that
+   * starts at 0. A real one would have surfaced on a page that had just loaded.
+   */
+  private lastTapEndedAt = Number.NEGATIVE_INFINITY;
+  private pressedAt = 0;
+  private pressedAtXY = { x: 0, y: 0 };
   /** Live contacts, so a second finger can promote a drag into a pinch. */
   private readonly pointers = new Map<number, { x: number; y: number }>();
 
@@ -190,6 +231,7 @@ export class CubeGestures {
     el.removeEventListener('pointerup', this.onUp);
     el.removeEventListener('pointercancel', this.onUp);
     this.scheduler.caf(this.animation);
+    this.scheduler.caf(this.momentum);
   }
 
   /** True while a turn is springing to its target, so input is ignored until it lands. */
@@ -202,16 +244,70 @@ export class CubeGestures {
     return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
   }
 
+  private centroid(): { x: number; y: number } {
+    const all = [...this.pointers.values()];
+    if (all.length === 0) return { x: 0, y: 0 };
+    return {
+      x: all.reduce((n, p) => n + p.x, 0) / all.length,
+      y: all.reduce((n, p) => n + p.y, 0) / all.length,
+    };
+  }
+
+  private stopMomentum(): void {
+    if (this.momentum) {
+      this.scheduler.caf(this.momentum);
+      this.momentum = 0;
+    }
+  }
+
+  /**
+   * Zoom past a limit resists rather than stopping dead.
+   *
+   * A hard stop is indistinguishable from a frozen app on a device with no vibration
+   * API -- the same argument the refusal spec makes for a locked drag -- so the limits
+   * reuse the refusal's asymptotic shape rather than inventing a third vocabulary.
+   * The ceiling is 17% past either end, reached by pulling and never by accident.
+   */
+  private setZoomRubberBanded(f: number): void {
+    const limit = f > ZOOM_MAX ? ZOOM_MAX : f < ZOOM_MIN ? ZOOM_MIN : null;
+    if (limit === null) {
+      this.renderer.setZoom(f);
+      return;
+    }
+    const u = Math.log(f / limit);
+    const eased = Math.sign(u) * ZOOM_RUBBER_R * (1 - Math.exp(-Math.abs(u) / ZOOM_RUBBER_R));
+    this.renderer.setZoom(limit * Math.exp(eased));
+  }
+
+  /** Let go past a limit and it springs back to it. This is the refuse spring. */
+  private settleZoom(): void {
+    const f = this.renderer.getZoom();
+    const target = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, f));
+    if (Math.abs(Math.log(f / target)) < 1e-4) return;
+    this.spring(Math.log(f), Math.log(target), 0, { stiffness: 700, damping: 34, mass: 0.5 }, (v) =>
+      this.renderer.setZoom(Math.exp(v)),
+    );
+  }
+
   private onDown = (event: PointerEvent): void => {
     event.preventDefault();
     this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
-    // A second finger always means zoom, whatever the first one was doing.
+    this.pressedAt = this.scheduler.now();
+    this.pressedAtXY = { x: event.clientX, y: event.clientY };
+
+    // Touching the cube kills any momentum on the same frame. Without that release
+    // valve a 400ms decay is a nuisance mid-solve; with it, the cube stops dead under
+    // your finger, which is what a real one does.
+    this.stopMomentum();
+
+    // A second finger means scale and orbit together, whatever the first was doing.
     if (this.pointers.size === 2) {
       this.drag = {
         kind: 'pinch',
-        startDistance: this.pinchDistance(),
+        startSpan: this.pinchDistance(),
         startZoom: this.renderer.getZoom(),
+        lastCentroid: this.centroid(),
         engaged: false,
       };
       return;
@@ -242,9 +338,7 @@ export class CubeGestures {
       kind: 'orbit',
       lastX: event.clientX,
       lastY: event.clientY,
-      lastTime: this.scheduler.now(),
-      velocityRight: 0,
-      velocityDown: 0,
+      history: [{ t: this.scheduler.now(), x: event.clientX, y: event.clientY }],
     };
   };
 
@@ -261,32 +355,32 @@ export class CubeGestures {
     event.preventDefault();
 
     if (drag.kind === 'pinch') {
-      const distance = this.pinchDistance();
-      if (!distance || !drag.startDistance) return;
-      if (!drag.engaged && Math.abs(distance - drag.startDistance) < PINCH_THRESHOLD_PX) return;
+      const span = this.pinchDistance();
+      const centre = this.centroid();
+      if (!span || !drag.startSpan) return;
+
+      // The centroid orbits even before the span has moved enough to be a zoom, so two
+      // fingers can always turn the cube.
+      this.renderer.orbitBy(centre.x - drag.lastCentroid.x, centre.y - drag.lastCentroid.y);
+      drag.lastCentroid = centre;
+
+      if (!drag.engaged && Math.abs(span - drag.startSpan) < PINCH_THRESHOLD_PX) return;
       drag.engaged = true;
-      // Fingers apart means bigger, so the camera comes IN: zoom scale is inverse.
-      this.renderer.setZoom(drag.startZoom * (drag.startDistance / distance));
+      // Fingers apart means a bigger cube: f follows the span directly.
+      this.setZoomRubberBanded(drag.startZoom * (span / drag.startSpan));
       return;
     }
 
     if (drag.kind === 'orbit') {
-      const dx = event.clientX - drag.lastX;
-      const dy = event.clientY - drag.lastY;
-      const width = this.renderer.canvas.clientWidth || 1;
-      const perPixel = Math.PI / (ORBIT_GAIN * width);
-
       // Incremental, about the axes the screen defines right now -- which is what makes
       // this continuous in every direction with no clamp and no gimbal lock.
-      this.renderer.orbitBy(dx * perPixel, dy * perPixel);
-
-      const t = this.scheduler.now();
-      const dt = Math.max(1, t - drag.lastTime) / 1000;
-      drag.velocityRight = (dx * perPixel) / dt;
-      drag.velocityDown = (dy * perPixel) / dt;
+      this.renderer.orbitBy(event.clientX - drag.lastX, event.clientY - drag.lastY);
       drag.lastX = event.clientX;
       drag.lastY = event.clientY;
-      drag.lastTime = t;
+
+      const t = this.scheduler.now();
+      drag.history.push({ t, x: event.clientX, y: event.clientY });
+      while (drag.history.length > 2 && t - drag.history[0].t > VELOCITY_WINDOW_MS) drag.history.shift();
       return;
     }
 
@@ -301,6 +395,7 @@ export class CubeGestures {
         kind: 'turn',
         base: resolved.base,
         tangent: resolved.tangent,
+        tangentLength: resolved.tangentLength,
         startX: drag.startX,
         startY: drag.startY,
         angle: 0,
@@ -318,10 +413,13 @@ export class CubeGestures {
   };
 
   private applyTurn(drag: TurnDrag, dx: number, dy: number): void {
-    const edge = this.renderer.screenEdgeLength() || 1;
+    // Per quarter turn: TURN_GAIN * S * max(floor, |t|) px along the tangent. Stated in
+    // the cube's own on-screen units, so a zoomed-in cube is heavier to turn -- the same
+    // rule the trackball follows, and physically honest for a bigger object.
+    const perQuarter = TURN_GAIN * this.renderer.unitScreenPx() * Math.max(TANGENT_FLOOR, drag.tangentLength);
     // Only the component of the drag along the layer's tangent turns it. Both are y-up.
     const along = dx * drag.tangent.x + -dy * drag.tangent.y;
-    const raw = (along / (TURN_GAIN * edge)) * (90 * DEG);
+    const raw = (along / (perQuarter || 1)) * (90 * DEG);
     const angle = Math.max(-LIVE_CLAMP, Math.min(LIVE_CLAMP, raw));
 
     const t = this.scheduler.now();
@@ -346,10 +444,27 @@ export class CubeGestures {
     this.pointers.delete(event.pointerId);
     const drag = this.drag;
 
+    // A tap is short and barely moves -- under the axis-lock threshold, so it can never
+    // have committed a turn. Two of them reset the view.
+    const now = this.scheduler.now();
+    const travel = Math.hypot(event.clientX - this.pressedAtXY.x, event.clientY - this.pressedAtXY.y);
+    if (now - this.pressedAt <= TAP_MAX_MS && travel <= TAP_MAX_PX) {
+      if (now - this.lastTapEndedAt <= DOUBLE_TAP_MS) {
+        this.lastTapEndedAt = 0;
+        this.drag = null;
+        this.resetView();
+        return;
+      }
+      this.lastTapEndedAt = now;
+    }
+
     // Lifting one finger of a pinch ends the pinch rather than resuming an orbit
     // mid-gesture, which would jump the cube.
     if (drag?.kind === 'pinch') {
-      if (this.pointers.size < 2) this.drag = null;
+      if (this.pointers.size < 2) {
+        this.drag = null;
+        this.settleZoom();
+      }
       return;
     }
 
@@ -405,33 +520,64 @@ export class CubeGestures {
   private glideOrbit(drag: OrbitDrag): void {
     if (prefersReducedMotion()) return;
 
-    let vRight = drag.velocityRight;
-    let vDown = drag.velocityDown;
-    if (Math.hypot(vRight, vDown) < ORBIT_CUTOFF) return;
+    // Velocity over the last window, never a single frame delta.
+    const history = drag.history;
+    if (history.length < 2) return;
+    const first = history[0];
+    const last = history[history.length - 1];
+    const dt = (last.t - first.t) / 1000;
+    if (dt <= 0) return;
 
-    // The screen axes are captured once: the cube turns under them, they do not turn
-    // with it, so a glide keeps going the way the finger was going.
-    const { up, right } = this.renderer.screenAxes();
-    let last = this.scheduler.now();
+    const dx = last.x - first.x;
+    const dy = last.y - first.y;
+    let speed = Math.hypot(dx, dy) / dt; // px per second
+    if (speed < ORBIT_CUTOFF_PXPS) return;
+
+    // The axis is captured once and stays screen-fixed: the cube turns under it rather
+    // than it turning with the cube, so a glide keeps going the way the finger went.
+    const axis = new Vector3(dy, dx, 0).normalize();
+    const perPx = Math.PI / this.renderer.faceWidthPx();
+    let last_t = this.scheduler.now();
 
     const glide = (): void => {
       const t = this.scheduler.now();
-      const dt = Math.min(0.05, Math.max(0.001, (t - last) / 1000));
-      last = t;
-      const decay = Math.exp(-(dt * 1000) / ORBIT_DECAY_MS);
-      vRight *= decay;
-      vDown *= decay;
-      this.renderer.spinBy(up, vRight * dt);
-      this.renderer.spinBy(right, vDown * dt);
+      const step = Math.min(0.05, Math.max(0.001, (t - last_t) / 1000));
+      last_t = t;
+      speed *= Math.exp(-(step * 1000) / ORBIT_DECAY_MS);
+      this.renderer.spinBy(axis, speed * step * perPx);
 
-      if (Math.hypot(vRight, vDown) > ORBIT_CUTOFF) {
-        this.animation = this.scheduler.raf(glide);
+      if (speed > ORBIT_CUTOFF_PXPS) {
+        this.momentum = this.scheduler.raf(glide);
+        return;
+      }
+      this.momentum = 0;
+    };
+
+    this.momentum = this.scheduler.raf(glide);
+  }
+
+  /** Double tap anywhere in the stage returns the view to where it started. */
+  private resetView(): void {
+    this.stopMomentum();
+    const fromQ = this.renderer.orientationQuaternion();
+    const toQ = defaultOrientation();
+    const fromF = this.renderer.getZoom();
+    const start = this.scheduler.now();
+
+    const step = (): void => {
+      const raw = Math.min(1, (this.scheduler.now() - start) / VIEW_RESET_MS);
+      // cubic-bezier(0.16, 1, 0.3, 1), near enough for a 260ms view move.
+      const p = 1 - (1 - raw) ** 3;
+      const q = fromQ.clone().slerp(toQ, p); // shortest arc
+      this.renderer.setOrientation(q);
+      this.renderer.setZoom(fromF + (ZOOM_REST - fromF) * p);
+      if (raw < 1) {
+        this.animation = this.scheduler.raf(step);
         return;
       }
       this.animation = 0;
     };
-
-    this.animation = this.scheduler.raf(glide);
+    this.animation = this.scheduler.raf(step);
   }
 
   /**
@@ -492,5 +638,16 @@ export class CubeGestures {
   }
 }
 
-export const DEFAULTS = { TURN_GAIN, FLICK_RAD_PER_S, AXIS_LOCK_PX, ORBIT_GAIN, PINCH_THRESHOLD_PX };
-export { Vector3 };
+export const DEFAULTS = {
+  TURN_GAIN,
+  TANGENT_FLOOR,
+  FLICK_RAD_PER_S,
+  AXIS_LOCK_PX,
+  PINCH_THRESHOLD_PX,
+  ORBIT_DECAY_MS,
+  ORBIT_CUTOFF_PXPS,
+  VELOCITY_WINDOW_MS,
+  TAP_MAX_MS,
+  TAP_MAX_PX,
+  DOUBLE_TAP_MS,
+};

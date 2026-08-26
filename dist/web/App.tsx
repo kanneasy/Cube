@@ -83,6 +83,7 @@ export function App() {
   const [today, setToday] = useState('');
   const [installed, setInstalled] = useState(true);
   const [noticeDismissed, setNoticeDismissed] = useState(false);
+  const zoomSaveTimer = useRef<number | undefined>(undefined);
   const [firstRunSeen, setFirstRunSeen] = useState(true);
 
   const library = useLibrary();
@@ -137,9 +138,33 @@ export function App() {
     solveRef.current.newScramble();
     void libraryRef.current.todaysScramble().then(({ date }) => setToday(date));
 
+    // Restore the zoom the user last chose. Orientation deliberately does NOT persist:
+    // it is transient working state, and the first frame of a launch is the brand.
+    void libraryRef.current
+      .readSetting<number>('zoom')
+      .then((f) => {
+        if (typeof f === 'number') renderer.setZoom(f);
+      })
+      .catch(() => {
+        // No stored preference, or storage unavailable. The default framing is correct.
+      });
+
+    // Save it, debounced, so a pinch does not write on every frame.
+    const onZoomSettled = () => {
+      window.clearTimeout(zoomSaveTimer.current);
+      zoomSaveTimer.current = window.setTimeout(() => {
+        void libraryRef.current.writeSetting('zoom', renderer.getZoom()).catch(() => {});
+      }, 600);
+    };
+    stage.addEventListener('pointerup', onZoomSettled);
+    stage.addEventListener('pointercancel', onZoomSettled);
+
     return () => {
       window.removeEventListener('resize', onResize);
       window.removeEventListener('pointerdown', unlock);
+      stage.removeEventListener('pointerup', onZoomSettled);
+      stage.removeEventListener('pointercancel', onZoomSettled);
+      window.clearTimeout(zoomSaveTimer.current);
       gestures.dispose();
       renderer.dispose();
       rendererRef.current = null;
@@ -309,7 +334,11 @@ export function App() {
             other -- the banner was covering the Next Scramble button completely, for
             exactly the not-yet-installed audience it exists to help. */}
         <div className="stage__foot">
-          {!firstRunSeen && (
+          {/* One at a time. Stacked, the two first-launch cards swallowed the stage and
+              covered the cube they are both talking about. The install notice goes
+              first because in a browser tab it explains why the drag it is teaching
+              will fight Safari. */}
+          {!firstRunSeen && (installed || noticeDismissed) && (
             <div className="first-run">
               {FIRST_RUN.map((line) => (
                 <span key={line}>{line}</span>
