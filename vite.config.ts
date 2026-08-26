@@ -29,8 +29,12 @@ export default defineConfig({
         description: 'A competition-legal 3x3x3 cube you solve with your thumb.',
         display: 'standalone',
         orientation: 'portrait',
-        background_color: '#0a0a0c',
-        theme_color: '#0a0a0c',
+        // True black, matching --color-void. Design's call and a functional one: any
+        // tint shifts perceived sticker hue by simultaneous contrast, and this app asks
+        // you to name six hues in a tenth of a second. A near-black splash would also
+        // flash against the app's own background on launch.
+        background_color: '#000000',
+        theme_color: '#000000',
         start_url: '/',
         icons: [
           { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },

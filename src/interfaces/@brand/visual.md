@@ -430,13 +430,16 @@ reveals near-black plastic underneath, and the outer edge of the object is a ste
 notched silhouette, never a plain straight-sided box. The cube is centered with identical
 black margin on all four sides -- left, right, top and bottom the same width -- occupying
 the central eighty percent of the frame on both axes. Seen in a three-quarter view tilted
-so the top face and two side faces are visible. Every small square sticker is a flat,
-fully saturated block of pure color with hard square corners, no gloss, no reflection, no
-highlight, no bevel: a cool pale grey-white (never cream, never yellow) visible on at
-least one face, a warm muted gold rather than lemon yellow, a true spring green leaning
-cool rather than olive or lime, a clear mid-value blue with a faint violet cast rather
-than a pure primary blue, a bright tangerine orange, and a deep crimson red with a hint of
-magenta rather than fire-engine red. The gaps between squares are near-black graphite.
+so the top face and two side faces are visible. Most of the top face and the two visible side faces read as
+large, coherent blocks of a single color each -- a cube that is almost solved -- except at
+the twisted seam where the offset layer's stickers show a scattering of two or three other
+colors breaking the pattern, the way a real cube looks caught mid-turn rather than fully
+mixed. Every small square sticker is a flat, fully saturated block of pure color with hard
+square corners, no gloss, no reflection, no highlight, no bevel: a cool pale grey-white
+(never cream, never yellow), a warm muted gold rather than lemon yellow, a true spring
+green leaning cool rather than olive or lime, a clear mid-value blue that is a true blue
+and not violet or indigo, a bright tangerine orange, and a deep crimson red leaning
+slightly toward magenta rather than fire-engine red. The gaps between squares are near-black graphite.
 Lighting is flat and graphic: top faces brightest, side faces one step darker, no
 gradients, no shadow. Centered, symmetrical, high contrast.
 ```
@@ -448,6 +451,19 @@ stepped silhouette -- because stating the instruction abstractly produced a flus
 cube with a cosmetic colour stripe standing in for the offset. And each hue is stated as a
 relationship *against the generic version it drifted to*, with the near-white called out
 explicitly, because it vanished entirely on the first attempt.
+
+A third revision followed the second generation. The faces now read as mostly-coherent
+blocks rather than a full scramble: a fully scrambled cube dissolves into a colourless
+mosaic at 48px, and the notched silhouette this brief works so hard to get is not
+perceptible at that size anyway, so the scramble was pure noise on top of a geometry win
+it could not preserve. The blue lost its "faint violet cast" instruction, which overshot
+into an actually-violet blue.
+
+**Two defects in the render are NOT the brief's to fix and must not be prompted at.**
+The provider returns real alpha even when opaque is requested, and it does not reliably
+centre to an even margin. Both are corrected deterministically after generation by
+`bin/flatten-icon.mjs`, because two attempts differing on transparency with identical
+transparency requests is provider non-determinism, not something prose controls.
 
 Derive `icon-192.png`, `icon-512.png`, `icon-512-maskable.png` and
 `apple-touch-icon-180.png` from the 1024 master; the 80% safe zone in the brief is what

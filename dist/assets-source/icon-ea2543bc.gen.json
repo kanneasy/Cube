@@ -1,0 +1,32 @@
+{
+  "id": "icon-ea2543bc",
+  "type": "icon",
+  "provider": "codex",
+  "model": "gpt-image-2",
+  "brief": "A 3D icon of a Rubik's-style cube frozen mid-turn, filling a full bleed square composition with no padding or margin, on a pure black background. The cube's entire top layer is twisted forty-five degrees out of alignment with the two layers beneath it: at each of the top layer's four corners a small triangular notch cuts into the outline and reveals near-black plastic underneath, and the outer edge of the object is a stepped, notched silhouette, never a plain straight-sided box. The cube is centered with identical black margin on all four sides - left, right, top and bottom the same width - occupying the central eighty percent of the frame on both axes. Seen in a three-quarter view tilted so the top face and two side faces are visible. Most of the top face and the two visible side faces read as large, coherent blocks of a single color each - a cube that is almost solved - except at the twisted seam where the offset layer's stickers show a scattering of two or three other colors breaking the pattern, the way a real cube looks caught mid-turn rather than fully mixed. Every small square sticker is a flat, fully saturated block of pure color with hard square corners, no gloss, no reflection, no highlight, no bevel: a cool pale grey-white (never cream, never yellow), a warm muted gold rather than lemon yellow, a true spring green leaning cool rather than olive or lime, a clear mid-value blue that is a true blue and not violet or indigo, a bright tangerine orange, and a deep crimson red leaning slightly toward magenta rather than fire-engine red. The gaps between squares are near-black graphite. Lighting is flat and graphic: top faces brightest, side faces one step darker, no gradients, no shadow. Centered, symmetrical, high contrast.",
+  "briefSha": "ea2543bc",
+  "requested": {
+    "size": "1024x1024",
+    "transparent": false,
+    "quality": null,
+    "steps": null,
+    "seed": null
+  },
+  "delivered": {
+    "width": 1024,
+    "height": 1024,
+    "alphaChannel": false,
+    "bytes": 875605
+  },
+  "sizeHonored": true,
+  "transparencyRequested": false,
+  "alphaChannelPresent": false,
+  "ignoredParams": [],
+  "estCostUsd": 0,
+  "createdAt": "2026-08-26T17:03:27.467Z",
+  "source": "codex-exec",
+  "editedFrom": null,
+  "nativeSize": "1254x1254",
+  "attempt": 1,
+  "latencyMs": 69441
+}

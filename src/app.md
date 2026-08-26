@@ -195,6 +195,13 @@ cubing.js: experimentalSolve3x3x3IgnoringCenters(state) on the live state.
 Verified 6ms on an arbitrary mid-solve state, 2026-08-26. Take solution[0].
 ~~~
 
+**Following hints is not the short way home.** Taking one move off an optimal solution
+and re-solving can land on a different, longer line, so a solve done entirely on hints
+runs longer than the scramble that produced it. Measured on this machine: twenty-nine
+hint moves for an eighteen-move scramble. That is not a defect to fix, it is what
+one-move-at-a-time advice from an optimal solver costs, and it is another reason hinted
+solves do not touch the boards.
+
 **An honest characteristic, stated because a user will meet it.** The hint follows the
 solver's path, not yours. It is a correct next move toward a solve, but it is the
 machine's route, and after taking one your cube is on a line that a layer-by-layer or
