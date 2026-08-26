@@ -5,7 +5,7 @@
 // permutation tables. There is no translation layer between logic and pixels.
 
 import * as THREE from 'three';
-import { stickersOf, TURNS, type CubeState, type Face, type TurnBase, type Vec3 } from '../../cube/state';
+import { applyMove, stickersOf, TURNS, type CubeState, type Face, type Move, type TurnBase, type Vec3 } from '../../cube/state';
 import { BODY_COLOR, SHADE, type Palette } from './palette';
 
 const CUBIE = 0.98; // leaves a hairline of black between cubies
@@ -150,6 +150,80 @@ export class CubeRenderer {
    * permanently; only which colour that face is drawn in changes, which is what lets a
    * cuber's memory of the scheme survive the swap.
    */
+  /**
+   * Play a sequence onto the cube, one quarter turn at a time.
+   *
+   * Used for the opening: the app shows a solved cube and scrambles itself in front of
+   * you rather than showing a spinner, which covers the solver's warm-up honestly and
+   * is a better first second than a loader.
+   *
+   * The LOGICAL state is already final before this runs; this only animates the visual
+   * catching up. But the visual must never be left BEHIND the logic, which is the trap
+   * here: requestAnimationFrame does not run in a hidden tab, so without a guard the
+   * cube would sit showing a solved position while the session holds a scrambled one,
+   * and the user would drag against a cube that is not the cube they can see. So a
+   * hidden document skips the animation entirely, and a wall-clock timer force-lands
+   * the final state if frames stop partway for any other reason.
+   */
+  playSequence(from: CubeState, moves: readonly Move[], msPerMove: number, onDone?: () => void): () => void {
+    let cancelled = false;
+    let state = from;
+    let index = 0;
+    let startedAt = 0;
+    let handle = 0;
+
+    const land = (): void => {
+      if (cancelled) return;
+      cancelled = true;
+      cancelAnimationFrame(handle);
+      window.clearTimeout(guard);
+      this.setLayerRotation(null, 0);
+      onDone?.();
+    };
+
+    // Frames do not run while the document is hidden. Land immediately rather than
+    // leaving the stage showing a position the logic has already moved past.
+    if (typeof document !== 'undefined' && document.hidden) {
+      onDone?.();
+      return () => {};
+    }
+
+    // Belt and braces for every other reason frames might stop: a backgrounded tab
+    // mid-sequence, a stalled compositor, a device throttling under load.
+    const guard = window.setTimeout(land, moves.length * msPerMove + 1500);
+
+    const step = (now: number): void => {
+      if (cancelled) return;
+      if (startedAt === 0) startedAt = now;
+      const move = moves[index];
+      if (!move) {
+        land();
+        return;
+      }
+      const t = Math.min(1, (now - startedAt) / msPerMove);
+      // Ease out, so each turn arrives rather than stopping dead.
+      const eased = 1 - (1 - t) ** 3;
+      this.setLayerRotation(move.base, eased * (Math.PI / 2) * move.amount);
+
+      if (t >= 1) {
+        state = applyMove(state, move);
+        this.setState(state);
+        index++;
+        startedAt = 0;
+      }
+      handle = requestAnimationFrame(step);
+    };
+
+    this.setState(from);
+    handle = requestAnimationFrame(step);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(handle);
+      window.clearTimeout(guard);
+      this.setLayerRotation(null, 0);
+    };
+  }
+
   setPalette(palette: Palette): void {
     this.palette = palette;
     const inset = CUBIE * (1 - palette.stickerInset * 2);

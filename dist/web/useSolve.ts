@@ -7,6 +7,8 @@
 
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { reduce, startSession, type Action, type Session } from '../solve/session';
+import { solvedCube } from '../cube/state';
+import { parseAlg } from '../cube/notation';
 import { generateScramble, nextHint } from '../solve/oracle';
 import type { Goal, TimerMode } from '../store/records';
 import type { CubeRenderer } from './cube/renderer';
@@ -38,6 +40,7 @@ export function useSolve(
   const [scrambling, setScrambling] = useState(true);
   const [hintPending, setHintPending] = useState(false);
   const refusalTimer = useRef<number | undefined>(undefined);
+  const cancelIntro = useRef<(() => void) | null>(null);
 
   const announceRefusal = useCallback(
     (message: string) => {
@@ -87,10 +90,24 @@ export function useSolve(
 
       void generateScramble()
         .then((scramble) => {
+          // The session is final immediately -- the animation below is only the stage
+          // catching up, so nothing about correctness depends on frames running.
           sessionRef.current = startSession({ mode, goal, scramble });
-          rendererRef.current?.setState(sessionRef.current.cube);
           setScrambling(false);
           force();
+
+          const renderer = rendererRef.current;
+          if (!renderer) return;
+          cancelIntro.current?.();
+          cancelIntro.current = renderer.playSequence(
+            solvedCube(),
+            parseAlg(scramble),
+            // Twenty-odd moves at this pace is roughly three quarters of a second: long
+            // enough to read as the cube scrambling itself, short enough that nobody
+            // waits through it.
+            34,
+            () => renderer.setState(sessionRef.current.cube),
+          );
         })
         .catch(() => {
           setScrambling(false);
@@ -104,6 +121,7 @@ export function useSolve(
     ({ scramble, goal, mode }: { scramble: string; goal: Goal; mode: TimerMode }) => {
       setRefusal(null);
       setScrambling(false);
+      cancelIntro.current?.();
       sessionRef.current = startSession({ mode, goal, scramble });
       rendererRef.current?.setState(sessionRef.current.cube);
       force();
@@ -126,14 +144,30 @@ export function useSolve(
       });
   }, [announceRefusal, dispatch, hintPending]);
 
-  useEffect(() => () => window.clearTimeout(refusalTimer.current), []);
+  useEffect(
+    () => () => {
+      window.clearTimeout(refusalTimer.current);
+      cancelIntro.current?.();
+    },
+    [],
+  );
+
+  // A turn during the intro cancels it: the user is ahead of the animation and the
+  // animation must never fight a thumb.
+  const dispatchWithIntroCancel = useCallback(
+    (action: Action) => {
+      if (action.type === 'turn' || action.type === 'undo') cancelIntro.current?.();
+      dispatch(action);
+    },
+    [dispatch],
+  );
 
   return {
     session: sessionRef.current,
     refusal,
     scrambling,
     hintPending,
-    dispatch,
+    dispatch: dispatchWithIntroCancel,
     newScramble,
     startWith,
     requestHint,
