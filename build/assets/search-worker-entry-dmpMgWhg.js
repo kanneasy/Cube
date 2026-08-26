@@ -1,2 +1,0 @@
-const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/inside-VUJSPBRA-B2UbLl5d.js","assets/index-BICutBOk.js","assets/index-BTJMdC1M.css"])))=>i.map(i=>d[i]);
-import{e,_ as o}from"./index-BICutBOk.js";e.expose&&o(()=>import("./inside-VUJSPBRA-B2UbLl5d.js"),__vite__mapDeps([0,1,2])).then(()=>{globalThis.postMessage?globalThis.postMessage("comlink-exposed"):globalThis.process.getBuiltinModule("node:worker_threads").parentPort?.postMessage("comlink-exposed")});var t=import.meta.url;export{t as WORKER_ENTRY_FILE_URL};

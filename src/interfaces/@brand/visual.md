@@ -475,3 +475,21 @@ makes the maskable crop survive. The iOS launch image is the same SVG mark cente
 Black room. One saturated object. One number. Nothing else asking for attention. If a
 screenshot of this app has more than one thing in it carrying color, something has gone
 wrong.
+
+
+## A note on `dist/web/ui/`
+
+The template's primitive library (Button, Card, Dialog, Field, Input, Skeleton, Toast,
+EmptyState) ships with every Builder app and **this app uses none of it.**
+
+That is not an oversight. The composition above is a fixed grid holding a cube, a
+number, a notation strip and four controls; there is no card, no text input, no dialog
+and no toast anywhere in the product, and the controls that do exist are specified here
+down to their hit boxes. Generic primitives would have to be bent out of shape to
+produce any of it.
+
+The consequence worth knowing: the `/design-system` gallery currently shows primitives
+no screen renders, so it describes the template rather than this app. Nothing is broken
+by that -- unused modules are tree-shaken out of the bundle -- but anyone running
+`design-sync` should expect the gallery to need repointing at the real chrome
+(`.control`, `.chip`, `.board`, the hold pads, the splits row) before it means anything.
