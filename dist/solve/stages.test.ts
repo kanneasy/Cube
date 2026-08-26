@@ -32,6 +32,30 @@ describe('stage splits on a CFOP solve', () => {
     expect(splits.shape === 'cfop' && splits.crossColor).toBe('D');
   });
 
+  it('picks the colour whose cross completes earliest, not merely a valid one', () => {
+    // Proving inference RAN is weaker than proving it CHOSE. Several faces can have a
+    // complete cross by the end of a solve -- a solved cube has six -- so the
+    // tie-break is what makes the reported split the one the solver actually built.
+    const states = [scrambleFor()];
+    for (const move of SOLVE) states.push(applyMoves(states[states.length - 1], [move]));
+
+    const firstCrossIndex = (color: Parameters<typeof crossComplete>[1]) =>
+      states.findIndex((s) => crossComplete(s, color)) - 1;
+
+    const chosen = splits.shape === 'cfop' ? splits.crossColor : null;
+    expect(chosen).not.toBeNull();
+
+    const chosenIndex = firstCrossIndex(chosen!);
+    const others = (['U', 'R', 'F', 'D', 'L', 'B'] as const)
+      .filter((c) => c !== chosen)
+      .map(firstCrossIndex)
+      .filter((i) => i >= 0);
+
+    // More than one face does complete a cross in this solve, so the comparison is real.
+    expect(others.length).toBeGreaterThan(0);
+    for (const other of others) expect(chosenIndex).toBeLessThanOrEqual(other);
+  });
+
   it('lands each stage on the exact move that completed it', () => {
     expect(splits.shape === 'cfop' && splits.cross.moveIndex).toBe(CROSS_END);
     expect(splits.shape === 'cfop' && splits.f2l.moveIndex).toBe(F2L_END);

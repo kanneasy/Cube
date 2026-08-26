@@ -183,6 +183,32 @@ export function isSolved(state: CubeState): boolean {
   });
 }
 
+/** Transpose. For an integer rotation matrix this is also its inverse. */
+export const matTranspose = (m: Mat3): Mat3 => [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];
+
+/**
+ * Whether two states are the same cube seen from a different angle.
+ *
+ * `isSolved` is the special case of this against a solved cube. Exposed separately
+ * because it is the only way to check a claim like "M turns the same way L does":
+ * M and R L' reach the same cube, differing only by a whole-cube rotation, and no
+ * comparison that ignores that rotation can say so.
+ */
+export function differsByWholeCubeRotation(a: CubeState, b: CubeState): boolean {
+  if (a.cubies.length !== b.cubies.length) return false;
+  const i = a.cubies.findIndex((c) => cubieKind(c) === 'corner');
+  if (i < 0) return false;
+  // Both states carry cubies in the same order, keyed by an unchanging home position.
+  const q = matMul(a.cubies[i].rot, matTranspose(b.cubies[i].rot));
+
+  return a.cubies.every((ca, index) => {
+    const cb = b.cubies[index];
+    if (!vecEq(ca.home, cb.home)) return false;
+    if (!vecEq(ca.pos, matApply(q, cb.pos))) return false;
+    return cubieKind(ca) === 'center' || matEq(ca.rot, matMul(q, cb.rot));
+  });
+}
+
 /** Every sticker on a cubie, as (home-frame normal, the face color it carries). */
 export function stickersOf(c: Cubie): { normal: Vec3; color: Face }[] {
   const out: { normal: Vec3; color: Face }[] = [];

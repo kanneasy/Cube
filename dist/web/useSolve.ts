@@ -9,7 +9,8 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { reduce, startSession, type Action, type Session } from '../solve/session';
 import { solvedCube } from '../cube/state';
 import { parseAlg } from '../cube/notation';
-import { generateScramble, nextHint } from '../solve/oracle';
+import { generateScramble, solutionFrom } from '../solve/oracle';
+import { HintPlanner } from '../solve/hints';
 import type { Goal, TimerMode } from '../store/records';
 import type { CubeRenderer } from './cube/renderer';
 import type { CubeAudio } from './cube/audio';
@@ -41,6 +42,8 @@ export function useSolve(
   const [hintPending, setHintPending] = useState(false);
   const refusalTimer = useRef<number | undefined>(undefined);
   const cancelIntro = useRef<(() => void) | null>(null);
+  // One planner for the life of the component; reset on every new scramble.
+  const plannerRef = useRef<HintPlanner | null>(null);
 
   const announceRefusal = useCallback(
     (message: string) => {
@@ -93,6 +96,7 @@ export function useSolve(
           // The session is final immediately -- the animation below is only the stage
           // catching up, so nothing about correctness depends on frames running.
           sessionRef.current = startSession({ mode, goal, scramble });
+          plannerRef.current?.reset();
           setScrambling(false);
           force();
 
@@ -123,6 +127,7 @@ export function useSolve(
       setScrambling(false);
       cancelIntro.current?.();
       sessionRef.current = startSession({ mode, goal, scramble });
+      plannerRef.current?.reset();
       rendererRef.current?.setState(sessionRef.current.cube);
       force();
     },
@@ -132,8 +137,13 @@ export function useSolve(
   const requestHint = useCallback(() => {
     const session = sessionRef.current;
     if (session.phase.kind === 'finished' || hintPending) return;
+
+    if (!plannerRef.current) {
+      plannerRef.current = new HintPlanner((log) => solutionFrom(sessionRef.current.scramble, log));
+    }
     setHintPending(true);
-    void nextHint(session.scramble, session.log.map((entry) => entry.move))
+    void plannerRef.current
+      .next(session.log.map((entry) => entry.move))
       .then((move) => {
         setHintPending(false);
         if (move) dispatch({ type: 'hintShown', move });

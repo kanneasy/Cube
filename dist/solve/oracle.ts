@@ -27,22 +27,25 @@ export async function generateScramble(): Promise<string> {
 }
 
 /**
- * The next single turn toward a solution from wherever the cube is now.
+ * A complete solution from wherever the cube is now.
  *
  * Returns the machine's route, not the user's method. That is an honest limitation
  * rather than a defect, and the app says so where hints are offered: after taking one,
  * a cube is on a line a layer-by-layer solver cannot continue from memory.
+ *
+ * The whole solution is returned rather than only its next move, and that matters. The
+ * solver is two-phase and therefore not optimal, so its first move from one state can
+ * lead to a state whose own first move leads straight back -- taking one move at a time
+ * from a freshly computed solution cycles forever. `HintPlanner` serves this in order
+ * instead.
  */
-export async function nextHint(scramble: string, played: readonly Move[]): Promise<Move | null> {
+export async function solutionFrom(scramble: string, played: readonly Move[]): Promise<Move[]> {
   const kpuzzle = await cube3x3x3.kpuzzle();
   let pattern = kpuzzle.defaultPattern().applyAlg(scramble);
   if (played.length > 0) pattern = pattern.applyAlg(formatAlg(played));
 
   const solution = (await experimentalSolve3x3x3IgnoringCenters(pattern)).toString().trim();
-  if (solution === '') return null; // already solved; nothing to hint
-
-  const moves = parseAlg(solution);
-  return moves[0] ?? null;
+  return solution === '' ? [] : parseAlg(solution);
 }
 
 /**

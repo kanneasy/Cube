@@ -59,18 +59,10 @@ export class CubeRenderer {
   private liveAngle = 0;
 
   private frameHandle = 0;
-  private firstFrameFired = false;
 
   constructor(
     private readonly container: HTMLElement,
     private palette: Palette,
-    /**
-     * Fired from inside the first real animation frame, not when the constructor
-     * returns. Building the scene is synchronous work; keying a loading state off the
-     * mount completing leaves whatever was last painted frozen on screen through it,
-     * which reads as a hang rather than a load.
-     */
-    private readonly onFirstFrame?: () => void,
   ) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -408,10 +400,6 @@ export class CubeRenderer {
     this.root.updateMatrixWorld(true);
     this.applyShading();
     this.renderer.render(this.scene, this.camera);
-    if (!this.firstFrameFired) {
-      this.firstFrameFired = true;
-      this.onFirstFrame?.();
-    }
   };
 
   dispose(): void {

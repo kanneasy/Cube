@@ -190,9 +190,21 @@ the next single turn. Taking one marks the solve as practice: it is excluded fro
 record boards and from the averages, permanently and visibly, from the moment the hint is
 taken rather than at the end.
 
+**A hint plans once and serves the plan in order.** The obvious implementation, solving
+afresh on every request and revealing the new first move, does not converge. The solver
+is two-phase and so not optimal, and it is deterministic per position, which means its
+first move from one state can lead to a state whose own first move leads straight back.
+Measured during the build: a hint returning the same move forever, the cube flipping
+between two positions for as long as anyone kept tapping. So the app computes a whole
+solution, hands out its moves one at a time, and only recomputes when the solver plays
+something the plan did not expect. Following a real solution terminates; following
+first-moves does not.
+
 ~~~ hint
-cubing.js: experimentalSolve3x3x3IgnoringCenters(state) on the live state.
-Verified 6ms on an arbitrary mid-solve state, 2026-08-26. Take solution[0].
+cubing.js: experimentalSolve3x3x3IgnoringCenters(state) on the live state, replayed as
+scramble + move log. Verified 6ms on an arbitrary mid-solve state, 2026-08-26.
+Keep the whole solution. Serve solution[i] while the log matches the plan; recompute
+when it diverges; drop the plan on a new scramble.
 ~~~
 
 **Following hints is not the short way home.** Taking one move off an optimal solution

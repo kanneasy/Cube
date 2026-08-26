@@ -8,6 +8,7 @@ import {
   centerFrame,
   colorAt,
   cubieKind,
+  differsByWholeCubeRotation,
   isSolved,
   solvedCube,
   FACES,
@@ -97,6 +98,48 @@ describe('U turns the layer the standard way', () => {
     expect(colorAt(s, [-1, 1, 0], FACE_NORMAL.L)).toBe('F');
     expect(colorAt(s, [0, 1, -1], FACE_NORMAL.B)).toBe('L');
     expect(colorAt(s, [1, 1, 0], FACE_NORMAL.R)).toBe('B');
+  });
+});
+
+// The oracle below cannot reach these. WCA scrambles and solutions never contain a
+// slice move, so cubing.js never exercises M, E or S -- yet the spec, the engine and
+// the notation module all assert their handedness as the fact that justifies charging
+// a slice two moves under OBTM. Without this, changing L's handedness and forgetting M
+// would regress in silence.
+describe('slice moves turn the way the face they are named after turns', () => {
+  it.each([
+    ['M', "R L'"], // M follows L
+    ['E', "U D'"], // E follows D
+    ['S', "F' B"], // S follows F
+  ])('%s reaches the same cube as %s, up to a whole-cube rotation', (slice, outer) => {
+    const viaSlice = applyMoves(solvedCube(), parseAlg(slice));
+    const viaOuter = applyMoves(solvedCube(), parseAlg(outer));
+    expect(differsByWholeCubeRotation(viaSlice, viaOuter)).toBe(true);
+  });
+
+  it.each([
+    ["M'", "R L'"],
+    ["E'", "U D'"],
+    ["S'", "F' B"],
+  ])('%s does NOT match %s, so the check has teeth', (slice, outer) => {
+    // The inverse slice must fail the same comparison, or the test above would pass
+    // against an engine that turned every slice the wrong way.
+    const viaSlice = applyMoves(solvedCube(), parseAlg(slice));
+    const viaOuter = applyMoves(solvedCube(), parseAlg(outer));
+    expect(differsByWholeCubeRotation(viaSlice, viaOuter)).toBe(false);
+  });
+});
+
+describe('whole-cube rotation comparison', () => {
+  it('says a cube and itself match', () => {
+    const s = applyMoves(solvedCube(), parseAlg("R U R'"));
+    expect(differsByWholeCubeRotation(s, s)).toBe(true);
+  });
+
+  it('says two genuinely different cubes do not', () => {
+    expect(
+      differsByWholeCubeRotation(applyMoves(solvedCube(), parseAlg('R')), applyMoves(solvedCube(), parseAlg('U'))),
+    ).toBe(false);
   });
 });
 
