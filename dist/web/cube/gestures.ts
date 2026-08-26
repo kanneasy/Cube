@@ -146,11 +146,21 @@ export class CubeGestures {
   private drag: Drag = null;
   private animation = 0;
 
+  /**
+   * The clock and the frame scheduler are injected rather than reached for directly.
+   * That is not test decoration: a turn commits at the END of a spring animation, so
+   * without an injectable scheduler the single most important interaction in this app
+   * could only be verified by watching it, and requestAnimationFrame does not run at
+   * all in a backgrounded tab.
+   */
   constructor(
     private readonly renderer: CubeRenderer,
     private readonly callbacks: GestureCallbacks,
-    /** Injectable for tests. */
-    private readonly now: () => number = () => performance.now(),
+    private readonly scheduler: {
+      now: () => number;
+      raf: (cb: () => void) => number;
+      caf: (handle: number) => void;
+    } = { now: () => performance.now(), raf: (cb) => requestAnimationFrame(cb), caf: (h) => cancelAnimationFrame(h) },
   ) {
     const el = renderer.canvas;
     el.addEventListener('pointerdown', this.onDown);
@@ -165,7 +175,7 @@ export class CubeGestures {
     el.removeEventListener('pointermove', this.onMove);
     el.removeEventListener('pointerup', this.onUp);
     el.removeEventListener('pointercancel', this.onUp);
-    cancelAnimationFrame(this.animation);
+    this.scheduler.caf(this.animation);
   }
 
   /** True while a turn is springing to its target, so input is ignored until it lands. */
@@ -176,7 +186,12 @@ export class CubeGestures {
   private onDown = (event: PointerEvent): void => {
     if (this.animating) return;
     event.preventDefault();
-    this.renderer.canvas.setPointerCapture(event.pointerId);
+    try {
+      this.renderer.canvas.setPointerCapture(event.pointerId);
+    } catch {
+      // A synthetic or already-captured pointer. Capture is an optimisation that keeps
+      // a drag alive past the canvas edge, not a requirement for the gesture to work.
+    }
 
     const hit = this.renderer.pickSticker(event.clientX, event.clientY);
     if (hit) {
@@ -199,7 +214,7 @@ export class CubeGestures {
       startPitch: pitch,
       lastX: event.clientX,
       lastY: event.clientY,
-      lastTime: this.now(),
+      lastTime: this.scheduler.now(),
       velocityYaw: 0,
       velocityPitch: 0,
     };
@@ -229,7 +244,7 @@ export class CubeGestures {
         startY: drag.startY,
         angle: 0,
         lastAngle: 0,
-        lastTime: this.now(),
+        lastTime: this.scheduler.now(),
         velocity: 0,
         detent: 0,
       };
@@ -249,7 +264,7 @@ export class CubeGestures {
     const yaw = drag.startYaw + dx * perPixel;
     const pitch = Math.max(-PITCH_CLAMP, Math.min(PITCH_CLAMP, drag.startPitch + dy * perPixel));
 
-    const t = this.now();
+    const t = this.scheduler.now();
     const dt = Math.max(1, t - drag.lastTime) / 1000;
     drag.velocityYaw = ((event.clientX - drag.lastX) * perPixel) / dt;
     drag.velocityPitch = ((event.clientY - drag.lastY) * perPixel) / dt;
@@ -267,7 +282,7 @@ export class CubeGestures {
     const raw = (along / (TURN_GAIN * edge)) * (90 * DEG);
     const angle = Math.max(-LIVE_CLAMP, Math.min(LIVE_CLAMP, raw));
 
-    const t = this.now();
+    const t = this.scheduler.now();
     const dt = Math.max(1, t - drag.lastTime) / 1000;
     drag.velocity = (angle - drag.lastAngle) / dt;
     drag.lastAngle = angle;
@@ -338,10 +353,10 @@ export class CubeGestures {
     let { yaw, pitch } = this.renderer.getOrbit();
     let vYaw = drag.velocityYaw;
     let vPitch = drag.velocityPitch;
-    let last = this.now();
+    let last = this.scheduler.now();
 
     const glide = (): void => {
-      const t = this.now();
+      const t = this.scheduler.now();
       const dt = Math.min(0.05, Math.max(0.001, (t - last) / 1000));
       last = t;
       const decay = Math.exp(-(dt * 1000) / ORBIT_DECAY_MS);
@@ -352,14 +367,14 @@ export class CubeGestures {
       this.renderer.setOrbit(yaw, pitch);
 
       if (Math.hypot(vYaw, vPitch) > ORBIT_CUTOFF) {
-        this.animation = requestAnimationFrame(glide);
+        this.animation = this.scheduler.raf(glide);
         return;
       }
       this.animation = 0;
       this.snapOrbit(yaw, pitch);
     };
 
-    this.animation = requestAnimationFrame(glide);
+    this.animation = this.scheduler.raf(glide);
   }
 
   /**
@@ -408,10 +423,10 @@ export class CubeGestures {
   ): void {
     let x = from;
     let v = velocity;
-    let last = this.now();
+    let last = this.scheduler.now();
 
     const step = (): void => {
-      const t = this.now();
+      const t = this.scheduler.now();
       const dt = Math.min(0.032, Math.max(0.001, (t - last) / 1000));
       last = t;
       const acceleration = (-stiffness * (x - to) - damping * v) / mass;
@@ -420,7 +435,7 @@ export class CubeGestures {
       onValue(x);
 
       if (Math.abs(x - to) > 0.0015 || Math.abs(v) > 0.02) {
-        this.animation = requestAnimationFrame(step);
+        this.animation = this.scheduler.raf(step);
         return;
       }
       onValue(to);
@@ -428,7 +443,7 @@ export class CubeGestures {
       onDone?.();
     };
 
-    this.animation = requestAnimationFrame(step);
+    this.animation = this.scheduler.raf(step);
   }
 }
 

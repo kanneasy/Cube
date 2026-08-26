@@ -1,18 +1,22 @@
-/* The page never scrolls. The whole app is one fixed stage, so the browser's own
-   scroll behaviours are switched off wholesale rather than reconciled with real
-   scrolling content -- there is none. Without this, Safari's rubber-band bounce and
-   pull-to-refresh both fire in the middle of dragging a cube layer. */
+/* The Solve screen is a fixed grid that never scrolls, in any state, on any device.
+   Every row height is reserved, so nothing on this screen can shift under the thumb
+   mid-solve. */
+
 html,
 body {
   margin: 0;
   padding: 0;
   height: 100%;
   overflow: hidden;
+  /* The page never scrolls, so the browser's scroll behaviours are switched off
+     wholesale rather than reconciled with real content. Without this, Safari's
+     rubber-band and pull-to-refresh both fire in the middle of dragging a layer. */
   overscroll-behavior: none;
   touch-action: none;
   background: var(--color-void);
   color: var(--color-ink-80);
-  font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+  font-family: var(--type-family-body);
+  -webkit-font-smoothing: antialiased;
 }
 
 body {
@@ -23,23 +27,168 @@ body {
 
 * {
   box-sizing: border-box;
-  /* Otherwise Safari flashes grey on every tappable element. */
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
   user-select: none;
   -webkit-user-select: none;
 }
 
-#root {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
 }
 
+#root {
+  height: 100dvh;
+}
+
+.solve {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows:
+    max(env(safe-area-inset-top), 12px)
+    var(--size-rail)
+    var(--space-8)
+    var(--size-readout)
+    minmax(320px, 1fr)
+    var(--size-notation)
+    var(--space-8)
+    var(--size-controlbar)
+    max(env(safe-area-inset-bottom), 12px);
+}
+
+.gutter {
+  padding-inline: var(--space-gutter);
+}
+
+/* ---- status rail ---- */
+
+.rail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chip {
+  height: 28px;
+  padding-inline: var(--space-12);
+  background: var(--color-graphite);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.12em;
+  color: var(--color-ink);
+  display: inline-flex;
+  align-items: center;
+}
+
+.rail__menu {
+  min-width: var(--size-tap-min);
+  height: var(--size-tap-min);
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-8);
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.12em;
+  color: var(--color-ink-56);
+}
+
+/* ---- readout ---- */
+
+.readout {
+  display: grid;
+  grid-template-rows: 68px var(--space-8) var(--size-qualifier) var(--space-8) var(--size-splits);
+  align-content: start;
+}
+
+.timer {
+  font-family: var(--type-family-display);
+  font-size: var(--type-size-timer);
+  font-weight: 800;
+  line-height: var(--type-leading-timer);
+  letter-spacing: var(--type-tracking-timer);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  color: var(--color-ink-56);
+  display: flex;
+  align-items: baseline;
+}
+
+.timer[data-live='true'] {
+  color: var(--color-ink);
+}
+
+/* The flickering hundredths are noise mid-solve and the whole point of the number
+   afterward, so they dim while running and brighten on stop. The SIZE never changes,
+   or the number would reflow at the moment it matters most. */
+.timer__fraction {
+  font-size: calc(var(--type-size-timer) * var(--type-size-timer-fraction));
+  opacity: 0.55;
+  transition: opacity 180ms ease-out;
+}
+
+.timer[data-settled='true'] .timer__fraction {
+  opacity: 1;
+}
+
+/* Sits against the number it disqualifies, which is where proximity puts it. */
+.qualifier {
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.12em;
+  color: var(--color-ink-56);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.qualifier[data-alarm='true'] {
+  color: var(--color-alarm);
+}
+
+.splits {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  align-items: end;
+  gap: var(--space-8);
+}
+
+.split__label {
+  font-size: var(--type-size-micro);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.14em;
+  color: var(--color-ink-56);
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+}
+
+/* The scope limit stated affirmatively rather than buried. */
+.split__scope {
+  font-size: var(--type-size-micro);
+  color: var(--color-ink-32);
+}
+
+.split__value {
+  font-family: var(--type-family-mono);
+  font-size: var(--type-size-data);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-80);
+  margin-top: 2px;
+}
+
+/* ---- stage ---- */
+
 .stage {
-  flex: 1;
-  min-height: 0;
   position: relative;
+  min-height: 0;
 }
 
 .stage canvas {
@@ -48,64 +197,149 @@ body {
   height: 100%;
 }
 
-.chrome {
-  position: absolute;
-  left: 0;
-  right: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-}
-
-.chrome--top {
-  top: 0;
-  padding-top: calc(env(safe-area-inset-top) + 12px);
-  flex-direction: column;
-  gap: 4px;
-}
-
-.chrome--bottom {
-  bottom: 0;
-  padding-bottom: calc(env(safe-area-inset-bottom) + 16px);
-  flex-direction: column;
-  gap: 10px;
-}
-
-.timer {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum' 1;
-  font-size: clamp(44px, 15vw, 72px);
-  font-weight: 300;
-  letter-spacing: -0.02em;
-  line-height: 1;
-  color: var(--color-ink-56);
-}
-
-.timer[data-running='true'] {
-  color: var(--color-ink);
-}
-
-.scramble {
-  font-variant-numeric: tabular-nums;
-  font-size: 13px;
-  letter-spacing: 0.06em;
-  color: var(--color-ink-56);
-  max-width: 78vw;
-  text-align: center;
-  line-height: 1.5;
-}
+/* ---- notation strip ---- */
 
 .notation {
-  font-variant-numeric: tabular-nums;
-  font-size: 13px;
-  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--type-family-mono);
+  font-size: var(--type-size-notation);
+  letter-spacing: var(--type-tracking-notation);
   color: var(--color-ink-56);
-  min-height: 1.4em;
+  /* The newest move stays pinned at the right edge and older ones fade out to the left. */
 }
 
-.movecount {
-  font-variant-numeric: tabular-nums;
-  font-size: 14px;
+/* The growing move log pins the newest move at the right edge and fades older ones
+   off to the left. */
+.notation[data-mode='log'] {
+  mask-image: linear-gradient(to right, transparent, black 32px);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 32px);
+}
+
+/* The scramble reads from the left with its label pinned, and fades off to the right.
+   Right-aligning it pushed the SCRAMBLE label off the screen entirely. */
+.notation[data-mode='scramble'] {
+  justify-content: flex-start;
+  mask-image: linear-gradient(to left, transparent, black 32px);
+  -webkit-mask-image: linear-gradient(to left, transparent, black 32px);
+}
+
+.notation__label {
+  font-family: var(--type-family-body);
+  font-size: var(--type-size-micro);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.14em;
+  color: var(--color-ink-32);
+  margin-right: var(--space-8);
+}
+
+.notation__move {
+  display: inline-block;
+  animation: move-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.notation__move + .notation__move {
+  margin-left: 0.55em;
+}
+
+@keyframes move-in {
+  from {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+}
+
+.notation[data-refused='true'] {
+  justify-content: flex-start;
+  mask-image: none;
+  -webkit-mask-image: none;
+  color: var(--color-ink-56);
+  font-family: var(--type-family-body);
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.12em;
+}
+
+/* ---- control bar ---- */
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-16);
+}
+
+.control {
+  height: 48px;
+  min-width: 72px;
+  padding-inline: var(--space-12);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.12em;
   color: var(--color-ink-80);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* A visibly present, visibly inert control -- never a hidden one. */
+.control:disabled {
+  border-color: rgba(255, 255, 255, 0.06);
+  color: var(--color-ink-32);
+  cursor: default;
+}
+
+.control__glyph {
+  font-family: var(--type-family-mono);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.control-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.control__scope {
+  font-size: var(--type-size-micro);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.14em;
+  color: var(--color-ink-32);
+}
+
+/* Sits beside Undo because Undo is what changes it. Putting it under the timer would
+   be prettier and would break proximity. */
+.movecount {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1;
+}
+
+.movecount__value {
+  font-family: var(--type-family-mono);
+  font-size: var(--type-size-metric);
+  font-weight: var(--type-weight-mono);
+  letter-spacing: var(--type-tracking-metric);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-80);
+}
+
+.movecount__label {
+  font-size: var(--type-size-micro);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.14em;
+  color: var(--color-ink-56);
+  margin-top: 3px;
+}
+
+.controls__spacer {
+  flex: 1;
 }
