@@ -188,9 +188,21 @@ button {
 
 /* ---- stage ---- */
 
+/* A column, not a positioning context with things floating over it. Anything in the
+   foot takes space FROM the canvas rather than painting on top of it -- the install
+   note was covering the bottom third of the cube, on the very first paint, on a screen
+   whose whole thesis is that nothing competes with the cube. */
 .stage {
   position: relative;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.stage__canvas {
+  flex: 1;
+  min-height: 0;
+  position: relative;
 }
 
 .stage canvas {
@@ -459,10 +471,8 @@ button {
 
 /* One bottom-anchored column, so nothing in it can paint over anything else in it. */
 .stage__foot {
-  position: absolute;
-  left: var(--space-16);
-  right: var(--space-16);
-  bottom: var(--space-12);
+  flex: none;
+  margin: 0 var(--space-16) var(--space-12);
   display: flex;
   flex-direction: column;
   align-items: center;

@@ -127,6 +127,7 @@ export class CubeRenderer {
   private liveBase: TurnBase | null = null;
   private liveAngle = 0;
   private frameHandle = 0;
+  private readonly resizeObserver: ResizeObserver | null;
 
   constructor(
     private readonly container: HTMLElement,
@@ -143,6 +144,15 @@ export class CubeRenderer {
     this.scene.add(this.root);
     this.buildCubies();
     this.resize();
+
+    // The stage changes size for reasons that are not a window resize -- a first-run
+    // card appearing beneath the cube, the install note being dismissed. Listening only
+    // to window.resize left the canvas at its old height, overflowing its box and
+    // painting opaque black over whatever had just appeared below it.
+    this.resizeObserver =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => this.resize());
+    this.resizeObserver?.observe(container);
+
     this.loop();
   }
 
@@ -510,6 +520,7 @@ export class CubeRenderer {
   };
 
   dispose(): void {
+    this.resizeObserver?.disconnect();
     cancelAnimationFrame(this.frameHandle);
     this.renderer.dispose();
     this.renderer.domElement.remove();

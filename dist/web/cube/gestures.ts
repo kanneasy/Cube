@@ -266,6 +266,21 @@ export class CubeGestures {
   }
 
   /**
+   * Cancel whatever is currently driving the view.
+   *
+   * `animation` is written by the turn spring, the view reset and the reduced-motion
+   * glide alike. Starting one without cancelling the last left two frame loops running,
+   * fighting over orientation and zoom, with whichever finished first zeroing the
+   * shared handle while the other kept going underneath the next gesture.
+   */
+  private stopAnimation(): void {
+    if (this.animation) {
+      this.scheduler.caf(this.animation);
+      this.animation = 0;
+    }
+  }
+
+  /**
    * Zoom past a limit resists rather than stopping dead.
    *
    * A hard stop is indistinguishable from a frozen app on a device with no vibration
@@ -306,8 +321,18 @@ export class CubeGestures {
     // your finger, which is what a real one does.
     this.stopMomentum();
 
-    // A second finger means scale and orbit together, whatever the first was doing.
+    // A second finger means scale and orbit together, whatever the first was doing --
+    // but a turn in progress has to be put down properly first. Without this the layer
+    // keeps its live rotation applied every frame and sits frozen mid-turn until the
+    // user happens to start and finish another turn.
     if (this.pointers.size === 2) {
+      if (this.drag?.kind === 'turn') {
+        this.renderer.setLayerRotation(null, 0);
+        this.callbacks.onRelease();
+      }
+      // A pinch must not start on top of a running spring or reset either; they would
+      // fight over orientation and zoom every frame.
+      this.stopAnimation();
       this.drag = {
         kind: 'pinch',
         startSpan: this.pinchDistance(),
@@ -455,7 +480,7 @@ export class CubeGestures {
     const travel = Math.hypot(event.clientX - this.pressedAtXY.x, event.clientY - this.pressedAtXY.y);
     if (now - this.pressedAt <= TAP_MAX_MS && travel <= TAP_MAX_PX) {
       if (now - this.lastTapEndedAt <= DOUBLE_TAP_MS) {
-        this.lastTapEndedAt = 0;
+        this.lastTapEndedAt = Number.NEGATIVE_INFINITY;
         this.drag = null;
         this.resetView();
         return;
@@ -569,6 +594,9 @@ export class CubeGestures {
   /** Double tap anywhere in the stage returns the view to where it started. */
   private resetView(): void {
     this.stopMomentum();
+    // A double tap can land while a turn's commit spring is still settling. Cancel it
+    // rather than run a second loop against the same orientation.
+    this.stopAnimation();
     const fromQ = this.renderer.orientationQuaternion();
     const toQ = defaultOrientation();
     const fromF = this.renderer.getZoom();

@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { CubeGestures } from './gestures';
 import { DEFAULT_PITCH, DEFAULT_YAW } from './renderer';
 import type { CubeRenderer } from './renderer';
-import { Quaternion, Vector3 } from 'three';
+import { Quaternion } from 'three';
 import type { Move, Vec3 } from '../../cube/state';
 
 // A clock and frame scheduler under test control. requestAnimationFrame does not run
@@ -40,7 +40,10 @@ function fakeScheduler() {
 
 const UNIT_PX = 262 / 2 / (12 * Math.tan((28 * Math.PI) / 360));
 
-function mockRenderer(coords: Vec3) {
+function mockRenderer(coords: Vec3, opts: { hits?: boolean } = {}) {
+  const orbits: { dx: number; dy: number }[] = [];
+  const spins: number[] = [];
+  const zooms: number[] = [];
   const canvas = document.createElement('canvas');
   Object.defineProperty(canvas, 'clientWidth', { value: 375 });
   canvas.setPointerCapture = () => {};
@@ -64,7 +67,10 @@ function mockRenderer(coords: Vec3) {
   const layerCalls: { base: string | null; angle: number }[] = [];
   const renderer = {
     canvas,
-    pickSticker: () => ({ cubieIndex: 0, worldNormal: [0, 0, 1] as Vec3 }),
+    // Configurable, so a test can land on the background and get an orbit. Previously
+    // this always hit, so every simulated touch became a turn and orbit/pinch were
+    // never exercised at all.
+    pickSticker: () => (opts.hits === false ? null : { cubieIndex: 0, worldNormal: [0, 0, 1] as Vec3 }),
     cubieCoords: () => coords,
 
     projectTangent: (_o: Vec3, d: Vec3) => {
@@ -76,15 +82,14 @@ function mockRenderer(coords: Vec3) {
     unitScreenPx: () => UNIT_PX,
     faceWidthPx: () => UNIT_PX * 3,
     setLayerRotation: (base: string | null, angle: number) => layerCalls.push({ base, angle }),
-    orbitBy: () => {},
-    spinBy: () => {},
-    screenAxes: () => ({ up: new Vector3(0, 1, 0), right: new Vector3(1, 0, 0) }),
+    orbitBy: (dx: number, dy: number) => orbits.push({ dx, dy }),
+    spinBy: () => spins.push(1),
     getZoom: () => 1,
-    setZoom: () => {},
+    setZoom: (f: number) => zooms.push(f),
     orientationQuaternion: () => new Quaternion(),
     setOrientation: () => {},
   };
-  return { renderer: renderer as unknown as CubeRenderer, canvas, layerCalls };
+  return { renderer: renderer as unknown as CubeRenderer, canvas, layerCalls, orbits, spins, zooms };
 }
 
 const pointer = (canvas: HTMLCanvasElement, type: string, x: number, y: number) =>
@@ -99,9 +104,9 @@ interface Harness {
   releases: number;
 }
 
-function setup(coords: Vec3 = [1, -1, 1]) {
+function setup(coords: Vec3 = [1, -1, 1], opts: { hits?: boolean } = {}) {
   const clock = fakeScheduler();
-  const { renderer, canvas, layerCalls } = mockRenderer(coords);
+  const { renderer, canvas, layerCalls, orbits, spins, zooms } = mockRenderer(coords, opts);
   const h: Harness = { commits: [], grabs: [], detents: 0, releases: 0 };
   const gestures = new CubeGestures(
     renderer,
@@ -114,7 +119,7 @@ function setup(coords: Vec3 = [1, -1, 1]) {
     },
     clock.scheduler,
   );
-  return { clock, canvas, gestures, h, layerCalls };
+  return { clock, canvas, gestures, h, layerCalls, orbits, spins, zooms };
 }
 
 /** Drag from (x,y) by (dx,dy) over `steps` moves, `msPerStep` apart. */

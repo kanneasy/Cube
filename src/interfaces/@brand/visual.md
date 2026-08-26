@@ -692,12 +692,14 @@ by that -- unused modules are tree-shaken out of the bundle -- but anyone runnin
 
 Set 2026-08-26, at the user's direction after holding the app on a real iPhone.
 
-**Resting zoom is f = 0.40, not 0.55.** The trackball correction above solved for a
+**Resting zoom is f = 0.45, not 0.55.** The trackball correction above solved for a
 resting framing that reproduced the old silhouette exactly at the DEFAULT pose. But a
 free-rotating cube's silhouette swings from 3.0 to 5.196 world units, and at f = 0.55
 the corner-on pose reaches 95% of the stage width -- eight pixels of background each
 side. The gesture that orbits the cube needs somewhere to start, and there was nowhere.
-At 0.40 the worst pose sits at 69% and leaves 53px, which is a thumb.
+It was set to 0.40 first, which leaves 53px, and then to 0.45 at the user's request for
+a slightly larger cube: the worst pose sits at 78% and leaves 38px, about a fingertip.
+That is the closest the cube can come and still leave somewhere to start an orbit.
 
 The zoom RANGE keeps its far end and its shape: f_min 0.24, f_rest 0.40, f_max 0.94.
 It is no longer log-symmetric about the rest, deliberately -- there is more call to zoom

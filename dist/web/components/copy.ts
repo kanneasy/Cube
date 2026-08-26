@@ -55,6 +55,12 @@ export const BROWSER_TAB_NOTICE = {
 } as const;
 
 /** Two lines, dismissed by the first drag — so the lesson and the action are one motion. */
-export const FIRST_RUN = ['Drag a sticker to turn that layer.', 'Drag the background to look around.'] as const;
+export const FIRST_RUN = [
+  'Drag a sticker to turn that layer.',
+  'Drag the background to look around.',
+  // With no pitch clamp and nothing settling to a canonical pose, this is the only way
+  // back to a known view -- so the one surface built to teach the gestures has to say it.
+  'Pinch to zoom. Double tap to reset the view.',
+] as const;
 
 export const HOLD_LABEL = 'HOLD BOTH TO START';

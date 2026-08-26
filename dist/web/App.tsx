@@ -339,7 +339,8 @@ export function App() {
         <Splits splits={finished ? session.phase.splits : null} />
       </div>
 
-      <div className="stage" ref={stageRef}>
+      <div className="stage">
+        <div className="stage__canvas" ref={stageRef} />
         {phase === 'covered' && (
           <button className="reveal" onClick={() => solve.dispatch({ type: 'reveal', at: performance.now() })}>
             REVEAL SCRAMBLE
@@ -354,7 +355,7 @@ export function App() {
               covered the cube they are both talking about. The install notice goes
               first because in a browser tab it explains why the drag it is teaching
               will fight Safari. */}
-          {!firstRunSeen && (installed || noticeDismissed) && (
+          {!firstRunSeen && (installed || noticeDismissed) && !inspecting && (
             <div className="first-run">
               {FIRST_RUN.map((line) => (
                 <span key={line}>{line}</span>
