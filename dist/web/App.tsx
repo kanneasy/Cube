@@ -214,15 +214,18 @@ export function App() {
       <div />
 
       <div className="rail gutter">
+        {/* The chip is 28px tall by design, which is well under a thumb-sized target,
+            so the button around it is 44px and the chip is what you see inside it. */}
         <button
-          className="chip"
+          className="chip-hit"
+          aria-label={`Mode: ${mode}. Tap to switch.`}
           onClick={() => {
             const next: TimerMode = mode === 'casual' ? 'competition' : 'casual';
             setMode(next);
             startFresh({ mode: next });
           }}
         >
-          {mode === 'casual' ? 'CASUAL' : 'COMPETITION'}
+          <span className="chip">{mode === 'casual' ? 'CASUAL' : 'COMPETITION'}</span>
         </button>
         <button className="rail__menu" onClick={() => setMenuOpen(true)}>
           MENU
