@@ -34,8 +34,12 @@ export const DEFAULT_PITCH = (24 * Math.PI) / 180;
  * around 8 units on a phone, so a 7.2 near limit allowed ten percent of zoom-in and
  * called it pinch-to-zoom.
  */
-export const ZOOM_MIN = 0.5; // twice as close
-export const ZOOM_MAX = 2.5; // two and a half times further out
+// The resting framing already puts the cube at 78% of the stage width, so there is
+// less headroom to zoom IN than the number suggests: at 0.5 the cube spans ~156% of
+// the stage and a single face fills the screen with nothing to orient by. 0.68 puts it
+// at roughly 115% -- stickers genuinely larger, the silhouette still readable.
+export const ZOOM_MIN = 0.68;
+export const ZOOM_MAX = 2.5;
 export const ZOOM_DEFAULT = 12;
 
 interface StickerRef {
