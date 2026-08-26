@@ -123,15 +123,24 @@ Acceptance scenarios:
 
 ### 9. Stage Splits
 
+> Three scenario titles here were rewritten at pickup, on 2026-08-26, because building
+> the detector disproved the behaviour they described. They originally called for
+> scanning backward for the last stable moment each stage holds, and for showing the
+> cross and solved marks when a solve is not CFOP-shaped. Every last-layer algorithm
+> breaks the first two layers partway through and restores them, so a backward scan
+> reports F2L complete from inside the last-layer algorithm on every real solve. And a
+> partial set of marks is still a confident claim about a solve the app did not
+> understand. See `src/app.md` and the commit that corrected the spec.
+
 **As** a cuber who wants to know where my seconds go **I want** automatic cross, F2L,
 OLL, and PLL splits inside each solve, **So that** I can see my breakdown without doing
 the math myself.
 
 Acceptance scenarios:
-- Cross completion is detected at the last stable moment it holds, not the first accidental instant — @tests
-- The cross face is inferred from whichever color's cross completes and survives to the end, not assumed to be white — @tests
+- Cross completion is detected at its real boundary, not pushed into the last-layer algorithm that temporarily breaks it — @tests
+- The cross face is inferred from whichever color yields a properly ordered CFOP shape with the earliest cross, not assumed to be white — @tests
 - F2L, OLL, and PLL splits are shown labelled as CFOP-oriented stages — @design-critic
-- A solve that doesn't progress in CFOP shape shows only the cross and solved marks, suppressing F2L/OLL/PLL rather than a wrong number — @tests
+- A solve that doesn't progress in CFOP shape is reported as unrecognised with no stage times at all, rather than a partial set of confident wrong ones — @tests
 - Undo before a stage boundary correctly removes that stage's recorded split — @tests
 
 ### 10. Install & Offline
