@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import { HOLD_LABEL } from './copy';
 
 /**
  * A literal, deliberate quote of a Stackmat: two sensor pads you rest fingers on, and
@@ -53,6 +54,8 @@ export function HoldZone({ onBothDown, onRelease }: { onBothDown: () => void; on
 
   return (
     <div className="hold" data-both={both}>
+      {/* Nothing else on screen explains what two blank circles are for. */}
+      <span className="hold__label">{HOLD_LABEL}</span>
       {[0, 1].map((pad) => (
         <div
           key={pad}

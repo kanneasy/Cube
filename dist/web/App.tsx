@@ -13,11 +13,30 @@ import type { PatternId, TimerMode } from '../store/records';
 import type { StageSplits } from '../solve/stages';
 import { HoldZone } from './components/HoldZone';
 import { Inspection } from './components/Inspection';
-import { MenuSheet } from './components/MenuSheet';
+import { Sheets } from './components/Sheets';
+import { BROWSER_TAB_NOTICE, FIRST_RUN } from './components/copy';
 import { UpdatePrompt } from './components/UpdatePrompt';
 
 /** Remembered so the notice is genuinely one-time rather than shown every launch. */
 const INSTALL_NOTICE_KEY = 'quarter-turn:install-notice-dismissed';
+const FIRST_RUN_KEY = 'quarter-turn:first-run-seen';
+
+const readFlag = (key: string): boolean => {
+  try {
+    return window.localStorage.getItem(key) === '1';
+  } catch {
+    // Storage blocked. Showing a one-time notice again is the harmless direction.
+    return false;
+  }
+};
+
+const writeFlag = (key: string): void => {
+  try {
+    window.localStorage.setItem(key, '1');
+  } catch {
+    // Nothing to remember it with; it will simply appear again.
+  }
+};
 
 function splitTime(text: string): [string, string] {
   const i = text.lastIndexOf('.');
@@ -64,6 +83,7 @@ export function App() {
   const [today, setToday] = useState('');
   const [installed, setInstalled] = useState(true);
   const [noticeDismissed, setNoticeDismissed] = useState(false);
+  const [firstRunSeen, setFirstRunSeen] = useState(true);
 
   const library = useLibrary();
   const solve = useSolve(rendererRef, audioRef.current, mode);
@@ -81,7 +101,11 @@ export function App() {
     const audio = audioRef.current;
 
     const gestures = new CubeGestures(renderer, {
-      onGrab: () => audio.unlock(),
+      onGrab: () => {
+        audio.unlock();
+        setFirstRunSeen(true);
+        writeFlag(FIRST_RUN_KEY);
+      },
       onRelease: () => {},
       onDetent: () => audio.tick(),
       onSnapStart: (settleMs) => {
@@ -104,14 +128,11 @@ export function App() {
       window.matchMedia('(display-mode: standalone)').matches ||
       (window.navigator as unknown as { standalone?: boolean }).standalone === true;
     setInstalled(standalone);
-    try {
-      // localStorage rather than IndexedDB: this is a per-device UI preference, not
-      // solve data, and it must not fail with the database in a private window --
-      // where this notice is arguably most relevant.
-      setNoticeDismissed(window.localStorage.getItem(INSTALL_NOTICE_KEY) === '1');
-    } catch {
-      // Storage blocked entirely. Showing the notice again is the harmless direction.
-    }
+    // localStorage rather than IndexedDB: these are per-device UI preferences, not
+    // solve data, and they must not fail with the database in a private window --
+    // where the install notice is arguably most relevant.
+    setNoticeDismissed(readFlag(INSTALL_NOTICE_KEY));
+    setFirstRunSeen(readFlag(FIRST_RUN_KEY));
 
     solveRef.current.newScramble();
     void libraryRef.current.todaysScramble().then(({ date }) => setToday(date));
@@ -285,6 +306,13 @@ export function App() {
             other -- the banner was covering the Next Scramble button completely, for
             exactly the not-yet-installed audience it exists to help. */}
         <div className="stage__foot">
+          {!firstRunSeen && (
+            <div className="first-run">
+              {FIRST_RUN.map((line) => (
+                <span key={line}>{line}</span>
+              ))}
+            </div>
+          )}
           {finished && (
             <button className="again" onClick={() => startFresh({})}>
               NEXT SCRAMBLE
@@ -292,20 +320,19 @@ export function App() {
           )}
           {!installed && !noticeDismissed && !inspecting && (
             <div className="install-note">
-              <span>Add to your home screen. In a Safari tab, the edge swipe fights the cube.</span>
+              <div className="install-note__text">
+                <strong>{BROWSER_TAB_NOTICE.title}</strong>
+                <span>{BROWSER_TAB_NOTICE.body}</span>
+                <span className="install-note__action">{BROWSER_TAB_NOTICE.action}</span>
+              </div>
               <button
-                className="install-note__dismiss"
-                aria-label="Dismiss"
+                className="control install-note__dismiss"
                 onClick={() => {
                   setNoticeDismissed(true);
-                  try {
-                    window.localStorage.setItem(INSTALL_NOTICE_KEY, '1');
-                  } catch {
-                    // Nothing to remember it with; it will simply appear again.
-                  }
+                  writeFlag(INSTALL_NOTICE_KEY);
                 }}
               >
-                ×
+                {BROWSER_TAB_NOTICE.dismiss}
               </button>
             </div>
           )}
@@ -380,14 +407,19 @@ export function App() {
       <UpdatePrompt />
 
       {menuOpen && (
-        <MenuSheet
+        <Sheets
           solves={library.solves}
           storageUnavailable={library.unavailable}
           today={today}
+          mode={mode}
           paletteId={paletteId}
           soundOn={soundOn}
           onPalette={setPaletteId}
           onSound={setSoundOn}
+          onMode={(next) => {
+            setMode(next);
+            startFresh({ mode: next });
+          }}
           onClose={() => setMenuOpen(false)}
           onStartDaily={() => {
             setMenuOpen(false);

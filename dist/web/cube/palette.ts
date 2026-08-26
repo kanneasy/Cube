@@ -17,6 +17,12 @@ export interface Palette {
   readonly id: PaletteId;
   readonly name: string;
   readonly faces: Record<Face, string>;
+  /**
+   * This palette's own name for each face. Shown under the colour word a cuber already
+   * knows, so switching palettes reads as "the same cube, retinted" rather than as a
+   * different cube.
+   */
+  readonly faceNames: Record<Face, string>;
   /** Used for +2 and DNF. Drawn from this palette's red slot so it stays visible. */
   readonly alarm: string;
   /** Fraction of a cubie face left as body colour around each sticker. */
@@ -39,6 +45,7 @@ export const PALETTES: Record<PaletteId, Palette> = {
       L: '#FF7A1A', // Ember
       R: '#FA2F45', // Signal
     },
+    faceNames: { U: 'Chalk', D: 'Flare', F: 'Verde', B: 'Cobalt', L: 'Ember', R: 'Signal' },
     alarm: '#FF4A5C',
     stickerInset: 0.06,
   },
@@ -55,6 +62,7 @@ export const PALETTES: Record<PaletteId, Palette> = {
       L: '#D9660F', // Rust
       R: '#E8497F', // Rose
     },
+    faceNames: { U: 'Bone', D: 'Amber', F: 'Cyan', B: 'Cobalt Deep', L: 'Rust', R: 'Rose' },
     alarm: '#F55E92',
     // A wider gap on this palette: separation is doing more work, so the grid helps.
     stickerInset: 0.09,
@@ -78,3 +86,16 @@ export const SHADE = {
   away: 0.76,
   down: 0.7,
 } as const;
+
+/** The colour word a cuber already knows, per face. Never changes between palettes. */
+export const FACE_WORDS: Record<Face, string> = {
+  U: 'WHITE',
+  D: 'YELLOW',
+  F: 'GREEN',
+  B: 'BLUE',
+  L: 'ORANGE',
+  R: 'RED',
+};
+
+/** Reading order for the palette preview, so both palettes line up column for column. */
+export const FACE_ORDER: Face[] = ['U', 'D', 'F', 'B', 'L', 'R'];

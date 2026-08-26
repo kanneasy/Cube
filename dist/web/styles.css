@@ -532,7 +532,7 @@ button {
    be covered. */
 .install-note {
   width: 100%;
-  padding: var(--space-8) var(--space-12);
+  padding: var(--space-12);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-control);
   background: var(--color-graphite);
@@ -543,8 +543,8 @@ button {
   color: var(--color-ink-56);
   text-align: left;
   display: flex;
-  align-items: center;
-  gap: var(--space-12);
+  flex-direction: column;
+  gap: var(--space-8);
 }
 
 .install-note__dismiss {
@@ -839,4 +839,174 @@ button {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ---- sheet navigation ---- */
+
+.menu__row {
+  width: 100%;
+  min-height: 64px;
+  padding: var(--space-12) 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-line-faint);
+}
+
+.menu li:last-child .menu__row {
+  border-bottom: none;
+}
+
+.menu__label {
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.12em;
+  color: var(--color-ink);
+}
+
+.menu__blurb {
+  font-size: var(--type-size-small);
+  line-height: var(--type-leading-body);
+  color: var(--color-ink-56);
+}
+
+.menu__check {
+  color: var(--color-ink);
+}
+
+/* Recognition over recall: three named destinations rather than one growing scroll,
+   so Sound stays as reachable on the five-hundredth solve as on the first. */
+.segments {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+}
+
+.segment {
+  flex: 1;
+  min-height: var(--size-tap-min);
+  border-radius: 6px;
+  font-size: var(--type-size-micro);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.1em;
+  color: var(--color-ink-56);
+}
+
+.segment[data-active='true'] {
+  background: var(--color-graphite);
+  color: var(--color-ink);
+}
+
+.swatch-key {
+  list-style: none;
+  margin: var(--space-16) 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-12);
+}
+
+.swatch-key li {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.swatch-key__chip {
+  width: 100%;
+  height: 18px;
+}
+
+.swatch-key__word {
+  font-size: var(--type-size-micro);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.1em;
+  color: var(--color-ink-80);
+}
+
+.swatch-key__name {
+  font-size: var(--type-size-micro);
+  color: var(--color-ink-56);
+}
+
+.about__p {
+  margin: 0 0 var(--space-16);
+  font-size: var(--type-size-body);
+  line-height: var(--type-leading-body);
+  color: var(--color-ink-80);
+}
+
+.about__p:last-child {
+  margin-bottom: 0;
+}
+
+/* ---- first run ---- */
+
+/* Dismissed by the first drag, which is also the thing it is describing -- so the
+   lesson and the action are the same motion. */
+/* Carries its own surface. The stage's bottom column grows upward over the cube, and
+   unbacked text on top of six saturated faces is unreadable -- which the detector
+   cannot see, because a canvas is not text. */
+.first-run {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: var(--space-12) var(--space-16);
+  background: var(--color-graphite);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  font-size: var(--type-size-small);
+  line-height: var(--type-leading-body);
+  color: var(--color-ink-80);
+  text-align: center;
+  pointer-events: none;
+  animation: fade-in 400ms ease-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ---- hold label ---- */
+
+.hold__label {
+  position: absolute;
+  top: var(--space-16);
+  font-size: var(--type-size-micro);
+  font-weight: var(--type-weight-label);
+  letter-spacing: 0.14em;
+  color: var(--color-ink-56);
+}
+
+/* ---- install note ---- */
+
+.install-note__text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.install-note__text strong {
+  color: var(--color-ink);
+  font-weight: var(--type-weight-label);
+}
+
+.install-note__action {
+  color: var(--color-ink-80);
+}
+
+.install-note__dismiss {
+  margin-left: auto;
+  flex: none;
+  align-self: flex-end;
+  width: auto;
+  height: 44px;
+  font-size: var(--type-size-micro);
 }
