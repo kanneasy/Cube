@@ -214,6 +214,17 @@ export class CubeRenderer {
     return new THREE.Vector2(b.x - a.x, -(b.y - a.y)).normalize();
   }
 
+  /**
+   * One cube edge, in CSS pixels on screen. The turn gain is specified relative to
+   * this rather than to the viewport, so the feel is identical on any phone.
+   */
+  screenEdgeLength(): number {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const a = new THREE.Vector3(-1.5, 1.5, 1.5).project(this.camera);
+    const b = new THREE.Vector3(1.5, 1.5, 1.5).project(this.camera);
+    return (Math.hypot(b.x - a.x, b.y - a.y) / 2) * rect.width;
+  }
+
   resize(): void {
     const w = this.container.clientWidth || 1;
     const h = this.container.clientHeight || 1;
