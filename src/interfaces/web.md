@@ -349,7 +349,7 @@ Three things it doesn't claim. Fewest Moves counts the length of a solution you 
 turned, in OBTM — the same metric real Fewest Moves competition uses, but there's no
 paper and no sixty-minute limit, so it isn't competition FMC. Average of 12 is what
 cubers use in practice, not a format the WCA runs; Average of 5 is the real one. And the
-Cross, F2L, OLL and PLL splits assume you solve CFOP — Cross and Solved hold no matter
+Cross, F2L and OLL splits assume you solve CFOP — Cross and Solved hold no matter
 how you solve, but F2L and OLL are the wrong number if you solve Roux or ZZ, so a solve
 that doesn't hold CFOP's shape shows no F2L or OLL at all rather than a wrong one.
 
@@ -373,3 +373,23 @@ Tap Share, then Add to Home Screen.
 
 NOT NOW
 ~~~
+
+
+## Correction: the fourth split is SOLVED, not PLL
+
+Set 2026-08-26, after the design critique found this file contradicting itself.
+
+The About copy above described "the Cross, F2L, OLL and PLL splits" while visual.md's
+readout spec names the four columns `CROSS`, `F2L` + `CFOP`, `OLL` + `CFOP`, `SOLVED` --
+and is explicit that Cross and Solved carry no qualifier because they are true of any
+solve however it was solved, while F2L and OLL are CFOP's model of one.
+
+visual.md is right and the About copy was wrong, so the copy is corrected here. All four
+splits are *moments*, not phases: the move at which each became true. Naming the last
+moment `PLL` would assert CFOP for the one mark that holds regardless of method, which
+is the opposite of what the scope tags exist to do.
+
+The acceptance scenario in `src/roadmap/mvp.md` still reads "F2L, OLL, and PLL splits",
+and is recorded as an open FAIL rather than edited to match. Changing a scenario after
+its story is picked up is a scope change and belongs to the user, not to whoever noticed
+the mismatch.
