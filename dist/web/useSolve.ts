@@ -17,6 +17,14 @@ import type { CubeAudio } from './cube/audio';
 
 export interface SolveController {
   session: Session;
+  /**
+   * Increments every time a NEW session is installed. Callers persisting a finished
+   * solve key off this rather than off the session's contents: clearing a "saved"
+   * marker when a new scramble is REQUESTED is wrong, because generating one is async
+   * and the old finished session is still current for the renders in between -- which
+   * wrote the same solve to history twice.
+   */
+  serial: number;
   /** Set when a turn was refused, for the notation strip to announce. Clears itself. */
   refusal: string | null;
   scrambling: boolean;
@@ -40,6 +48,7 @@ export function useSolve(
   const [refusal, setRefusal] = useState<string | null>(null);
   const [scrambling, setScrambling] = useState(true);
   const [hintPending, setHintPending] = useState(false);
+  const [serial, setSerial] = useState(0);
   const refusalTimer = useRef<number | undefined>(undefined);
   const cancelIntro = useRef<(() => void) | null>(null);
   // One planner for the life of the component; reset on every new scramble.
@@ -98,6 +107,7 @@ export function useSolve(
           sessionRef.current = startSession({ mode, goal, scramble });
           plannerRef.current?.reset();
           setScrambling(false);
+          setSerial((n) => n + 1);
           force();
 
           const renderer = rendererRef.current;
@@ -129,6 +139,7 @@ export function useSolve(
       sessionRef.current = startSession({ mode, goal, scramble });
       plannerRef.current?.reset();
       rendererRef.current?.setState(sessionRef.current.cube);
+      setSerial((n) => n + 1);
       force();
     },
     [rendererRef],
@@ -174,6 +185,7 @@ export function useSolve(
 
   return {
     session: sessionRef.current,
+    serial,
     refusal,
     scrambling,
     hintPending,

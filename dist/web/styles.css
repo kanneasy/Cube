@@ -461,12 +461,20 @@ button {
 
 /* ---- stage overlays ---- */
 
+/* One bottom-anchored column, so nothing in it can paint over anything else in it. */
+.stage__foot {
+  position: absolute;
+  left: var(--space-16);
+  right: var(--space-16);
+  bottom: var(--space-12);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-12);
+}
+
 .reveal,
 .again {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
   padding: var(--space-16) var(--space-24);
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-control);
@@ -477,10 +485,11 @@ button {
   color: var(--color-ink);
 }
 
-.again {
-  top: auto;
-  bottom: var(--space-16);
-  transform: translateX(-50%);
+.reveal {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
 }
 
 /* ---- hint token ---- */
@@ -519,10 +528,7 @@ button {
    overlap the readout, and the timer is the one thing on this screen that must never
    be covered. */
 .install-note {
-  position: absolute;
-  left: var(--space-16);
-  right: var(--space-16);
-  bottom: var(--space-12);
+  width: 100%;
   padding: var(--space-8) var(--space-12);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-control);

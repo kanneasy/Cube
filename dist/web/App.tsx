@@ -172,19 +172,23 @@ export function App() {
   }, [inspecting, inspectionMs]);
 
   // Persist on finish, exactly once per solve.
-  const savedRef = useRef<string | null>(null);
+  //
+  // Keyed on the session's serial, which only changes when a new session is actually
+  // installed. Keying on the solve's contents and clearing the marker when a new
+  // scramble was REQUESTED wrote every solve to history twice: generating a scramble
+  // is async, so the old finished session is still current for the renders in between,
+  // and the effect saved it again with a cleared marker.
+  const savedSerialRef = useRef<number | null>(null);
   useEffect(() => {
     if (session.phase.kind !== 'finished') return;
-    const key = `${session.scramble}|${session.log.length}|${session.phase.result.rawMs}`;
-    if (savedRef.current === key) return;
-    savedRef.current = key;
+    if (savedSerialRef.current === solve.serial) return;
+    savedSerialRef.current = solve.serial;
     const stored = toStoredSolve(session, new Date(), dailyDate ?? undefined);
     if (stored) void library.record(stored).catch(() => {});
-  }, [session, dailyDate, library]);
+  }, [session, solve.serial, dailyDate, library]);
 
   const startFresh = useCallback(
     (options: { mode?: TimerMode; goal?: { kind: 'solved' } | { kind: 'pattern'; pattern: PatternId } }) => {
-      savedRef.current = null;
       setDailyDate(null);
       setMenuOpen(false);
       solveRef.current.newScramble(options);
@@ -269,30 +273,36 @@ export function App() {
             REVEAL SCRAMBLE
           </button>
         )}
-        {finished && (
-          <button className="again" onClick={() => startFresh({})}>
-            NEXT SCRAMBLE
-          </button>
-        )}
-        {!installed && !noticeDismissed && (
-          <div className="install-note">
-            <span>Add to your home screen. In a Safari tab, the edge swipe fights the cube.</span>
-            <button
-              className="install-note__dismiss"
-              aria-label="Dismiss"
-              onClick={() => {
-                setNoticeDismissed(true);
-                try {
-                  window.localStorage.setItem(INSTALL_NOTICE_KEY, '1');
-                } catch {
-                  // Nothing to remember it with; it will simply appear again.
-                }
-              }}
-            >
-              ×
+        {/* Both of these are bottom-anchored in the stage, so they live in one column
+            rather than as two absolutely-positioned siblings that paint over each
+            other -- the banner was covering the Next Scramble button completely, for
+            exactly the not-yet-installed audience it exists to help. */}
+        <div className="stage__foot">
+          {finished && (
+            <button className="again" onClick={() => startFresh({})}>
+              NEXT SCRAMBLE
             </button>
-          </div>
-        )}
+          )}
+          {!installed && !noticeDismissed && (
+            <div className="install-note">
+              <span>Add to your home screen. In a Safari tab, the edge swipe fights the cube.</span>
+              <button
+                className="install-note__dismiss"
+                aria-label="Dismiss"
+                onClick={() => {
+                  setNoticeDismissed(true);
+                  try {
+                    window.localStorage.setItem(INSTALL_NOTICE_KEY, '1');
+                  } catch {
+                    // Nothing to remember it with; it will simply appear again.
+                  }
+                }}
+              >
+                ×
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       <div
@@ -375,7 +385,6 @@ export function App() {
           onStartDaily={() => {
             setMenuOpen(false);
             void library.todaysScramble().then(({ date, scramble }) => {
-              savedRef.current = null;
               setDailyDate(date);
               solveRef.current.startWith({ scramble, goal: { kind: 'solved' }, mode });
             });
@@ -383,7 +392,6 @@ export function App() {
           onStartPattern={(pattern) => {
             // A pattern challenge starts from a SOLVED cube: the puzzle is turning
             // solved into the pattern, not turning a random scramble into it.
-            savedRef.current = null;
             setDailyDate(null);
             setMenuOpen(false);
             solveRef.current.startWith({ scramble: '', goal: { kind: 'pattern', pattern }, mode });

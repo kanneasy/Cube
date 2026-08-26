@@ -8,49 +8,48 @@ import { useCallback, useRef, useState } from 'react';
  * colour and no hue in the chrome may compete with the puzzle. It is the app's one
  * deliberate deviation from the ritual, and the compensation is that it is the
  * brightest thing on the screen.
+ *
+ * Contact state lives in a ref, not in state, and that is load-bearing. Two fingers
+ * genuinely can land in the same tick, and a handler reading a closure-captured set
+ * would have the second contact overwrite the first -- so "both down" would never be
+ * reached and the clock would never start. On the one interaction the regulations are
+ * most precise about, that is not a risk worth taking on how a browser happens to
+ * batch touches.
  */
-export function HoldZone({
-  onBothDown,
-  onRelease,
-}: {
-  onBothDown: () => void;
-  onRelease: () => void;
-}) {
-  const [down, setDown] = useState<Set<number>>(new Set());
+export function HoldZone({ onBothDown, onRelease }: { onBothDown: () => void; onRelease: () => void }) {
+  const contacts = useRef<Set<number>>(new Set());
   const armed = useRef(false);
+  const [, force] = useState(0);
 
-  const update = useCallback(
-    (next: Set<number>) => {
-      setDown(next);
-      if (next.size >= 2 && !armed.current) {
-        armed.current = true;
-        onBothDown();
-        return;
-      }
-      // The lift is the start. Any drop below two contacts fires it.
-      if (next.size < 2 && armed.current) {
-        armed.current = false;
-        onRelease();
-      }
-    },
-    [onBothDown, onRelease],
-  );
+  const settle = useCallback(() => {
+    const count = contacts.current.size;
+    force((n) => n + 1);
+
+    if (count >= 2 && !armed.current) {
+      armed.current = true;
+      onBothDown();
+      return;
+    }
+    // The lift is the start. Any drop below two contacts fires it.
+    if (count < 2 && armed.current) {
+      armed.current = false;
+      onRelease();
+    }
+  }, [onBothDown, onRelease]);
 
   const press = (pad: number) => (event: React.PointerEvent) => {
     event.preventDefault();
-    const next = new Set(down);
-    next.add(pad);
-    update(next);
+    contacts.current.add(pad);
+    settle();
   };
 
   const lift = (pad: number) => (event: React.PointerEvent) => {
     event.preventDefault();
-    const next = new Set(down);
-    next.delete(pad);
-    update(next);
+    contacts.current.delete(pad);
+    settle();
   };
 
-  const both = down.size >= 2;
+  const both = contacts.current.size >= 2;
 
   return (
     <div className="hold" data-both={both}>
@@ -58,7 +57,7 @@ export function HoldZone({
         <div
           key={pad}
           className="hold__pad"
-          data-down={down.has(pad)}
+          data-down={contacts.current.has(pad)}
           data-both={both}
           onPointerDown={press(pad)}
           onPointerUp={lift(pad)}
