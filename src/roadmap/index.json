@@ -1,5 +1,48 @@
 {
-  "pitch": null,
-  "lanes": [],
-  "standalone": []
+  "pitch": "src/roadmap/pitch.html",
+  "lanes": [
+    {
+      "name": "The Reconstruction",
+      "narrative": "Turn the move log every solve already keeps into something to study, share, and drill — not just a timer result left behind the instant the cube scrambles again.",
+      "outcome": "After a solve worth learning from, the user studies or drills it before scrambling again, instead of clearing the cube and moving straight to the next attempt.",
+      "items": [
+        "solve-replay.md",
+        "reconstruction-export.md",
+        "redo-from-here.md",
+        "case-drill.md"
+      ]
+    },
+    {
+      "name": "Beyond CFOP",
+      "narrative": "Make the app's feedback — stage splits and the hint — match how a solver actually solves, not just the machine's own two-phase route, so no method gets treated as a rounding error.",
+      "outcome": "A cuber trusts and uses what the app tells them mid-solve and after it — reads their splits, takes a hint — as readily whatever method they solve with, instead of learning which parts of the app are only for CFOP.",
+      "items": [
+        "method-fingerprint.md",
+        "splits-for-every-method.md",
+        "route-true-hint.md",
+        "learn-to-solve-for-real.md"
+      ]
+    },
+    {
+      "name": "The Numbers That Matter",
+      "narrative": "Turn the splits every solve already produces into a trend a cuber can act on, so practice time goes where the data says it's actually needed.",
+      "outcome": "The user targets practice at whichever stage their own numbers prove slowest, instead of picking what to drill by feel.",
+      "items": [
+        "your-bottleneck.md",
+        "trend-lines.md",
+        "session-goals.md"
+      ]
+    },
+    {
+      "name": "The Shared Scramble",
+      "narrative": "Extend the daily ritual from a private log into something a few real cubers share — same puzzle, same day, a board scoped to people who matter, never a public leaderboard or an account nobody asked for.",
+      "outcome": "The user checks how specific people they know did on today's scramble, not just their own history, turning the daily scramble into something to talk about instead of something done alone.",
+      "items": [
+        "cross-device-sync.md",
+        "the-shared-daily.md",
+        "your-peoples-board.md"
+      ]
+    }
+  ],
+  "standalone": ["mvp.md"]
 }
