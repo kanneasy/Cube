@@ -422,18 +422,32 @@ ships before anyone installs, or changing it later means deleting and re-adding 
 App icon — `icon-1024.png`, 1024×1024
 
 ```
-A 3D icon of a cube puzzle caught mid-turn, filling the frame edge to edge with no border,
-no rounded corner and no padding, on a pure black background. The cube is seen in a
-three-quarter view, tilted so its top face and two side faces are all visible, and it
-occupies the central eighty percent of the frame with even black margin on every side. Its
-entire top layer is frozen rotated forty-five degrees out of alignment with the two layers
-beneath it, breaking the silhouette into a clean interlocking step. Every small square face
-is a flat, fully saturated block of pure color -- chalk white, warm gold, spring green,
-electric blue, bright orange, crimson -- with hard square corners, no gloss, no reflection,
-no highlight, no bevel. The gaps between squares are near-black graphite. Lighting is flat
-and graphic: top faces brightest, side faces one step darker, no gradients, no shadow.
-Centered, symmetrical, high contrast.
+A 3D icon of a Rubik's-style cube frozen mid-turn, filling a full bleed square
+composition with no padding or margin, on a pure black background. The cube's entire top
+layer is twisted forty-five degrees out of alignment with the two layers beneath it: at
+each of the top layer's four corners a small triangular notch cuts into the outline and
+reveals near-black plastic underneath, and the outer edge of the object is a stepped,
+notched silhouette, never a plain straight-sided box. The cube is centered with identical
+black margin on all four sides -- left, right, top and bottom the same width -- occupying
+the central eighty percent of the frame on both axes. Seen in a three-quarter view tilted
+so the top face and two side faces are visible. Every small square sticker is a flat,
+fully saturated block of pure color with hard square corners, no gloss, no reflection, no
+highlight, no bevel: a cool pale grey-white (never cream, never yellow) visible on at
+least one face, a warm muted gold rather than lemon yellow, a true spring green leaning
+cool rather than olive or lime, a clear mid-value blue with a faint violet cast rather
+than a pure primary blue, a bright tangerine orange, and a deep crimson red with a hint of
+magenta rather than fire-engine red. The gaps between squares are near-black graphite.
+Lighting is flat and graphic: top faces brightest, side faces one step darker, no
+gradients, no shadow. Centered, symmetrical, high contrast.
 ```
+
+This brief was rewritten on 2026-08-26 after the first generation failed the image gate.
+Two lessons are baked into the wording above and should not be edited back out. The
+offset top layer is described by its **visible geometric result** -- corner notches, a
+stepped silhouette -- because stating the instruction abstractly produced a flush, solved
+cube with a cosmetic colour stripe standing in for the offset. And each hue is stated as a
+relationship *against the generic version it drifted to*, with the near-white called out
+explicitly, because it vanished entirely on the first attempt.
 
 Derive `icon-192.png`, `icon-512.png`, `icon-512-maskable.png` and
 `apple-touch-icon-180.png` from the 1024 master; the 80% safe zone in the brief is what

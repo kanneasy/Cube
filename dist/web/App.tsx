@@ -259,7 +259,9 @@ export function App() {
           </button>
         )}
         {!installed && (
-          <div className="install-note">ADD TO HOME SCREEN — IN A SAFARI TAB, THE EDGE SWIPE FIGHTS THE CUBE</div>
+          <div className="install-note">
+            Add to your home screen. In a Safari tab, the edge swipe fights the cube.
+          </div>
         )}
       </div>
 

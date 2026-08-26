@@ -118,3 +118,23 @@ neutral sans carries the text. That is the reflex, and here it would be wrong: t
 headline in this app *is* a number, so the number's face is the display face and Supreme
 is the supporting voice. Naming the mono as the identity — rather than as the "code font"
 a design bolts on for timestamps — is the type decision this app makes.
+
+
+## Correction: the micro step is 11px, not 9px
+
+Set 2026-08-26, after the detector ran against the built screen.
+
+`micro` was specified at 9px and is now 11px. The detector's floor for functional UI
+text is 11px and its rule is explicit that sitting on the type ramp is not an exemption:
+"adding 8px to the ramp launders the token but not the legibility problem." Every use of
+this step in this app is functional rather than decorative -- `MOVES` under the move
+count, `CROSS` and `SOLVED` over the splits, `PRACTICE` under the hint, the `CFOP` and
+`NOT WCA` scope tags. Those scope tags are the app's honesty admissions, which makes them
+the last text in the product that should be hard to read.
+
+Nothing in the reserved grid moves as a result: the splits row holds 11 + 15 + 2 = 28px
+inside its 44px, and the control bar holds 22 + 11 + 3 = 36px inside its 64px.
+
+Notation tracking drops from 0.06em to 0.05em for the same reason -- a twenty-move
+scramble is a long string, not a short label, and 0.05em is the point where wide tracking
+stops costing reading speed.
