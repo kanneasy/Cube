@@ -756,3 +756,44 @@ button {
   line-height: var(--type-leading-body);
   color: var(--color-ink-80);
 }
+
+/* ---- focus and hover ---- */
+
+/* Every control needs a visible focus ring. The app is thumb-first, but it runs in a
+   browser and a keyboard has to be able to reach the same places a thumb can. */
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-control);
+}
+
+/* Scoped to a real pointer so a touch device never gets a stuck hover state after a
+   tap, which is the usual way hover styles go wrong on a phone. */
+@media (hover: hover) and (pointer: fine) {
+  .control:not(:disabled):hover,
+  .chip:hover,
+  .rail__menu:hover,
+  .board__link:hover,
+  .choice:hover {
+    border-color: var(--color-line-strong);
+    color: var(--color-ink);
+  }
+}
+
+.control:not(:disabled):active,
+.chip:active {
+  border-color: var(--color-line-strong);
+}
+
+/* The CSS half of reduced motion. The JS-driven half -- the turn spring, the orbit
+   momentum, the opening scramble -- cannot be reached from here and is handled in
+   cube/motion.ts. A rule in this block alone would look like a fix and do nothing. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

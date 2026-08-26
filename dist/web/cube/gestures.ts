@@ -9,6 +9,7 @@
 
 import { TURNS, type Move, type TurnBase, type Vec3 } from '../../cube/state';
 import type { CubeRenderer } from './renderer';
+import { prefersReducedMotion, REDUCED_SETTLE_MS } from './motion';
 import { DEFAULT_PITCH, PITCH_CLAMP, PITCH_SNAPS, YAW_SNAPS } from './renderer';
 
 const DEG = Math.PI / 180;
@@ -351,6 +352,12 @@ export class CubeGestures {
 
   private settleOrbit(drag: OrbitDrag): void {
     let { yaw, pitch } = this.renderer.getOrbit();
+    // Momentum is the part of the orbit most likely to be unwelcome; drop it entirely
+    // and go straight to the nearest canonical view.
+    if (prefersReducedMotion()) {
+      this.snapOrbit(yaw, pitch);
+      return;
+    }
     let vYaw = drag.velocityYaw;
     let vPitch = drag.velocityPitch;
     let last = this.scheduler.now();
@@ -421,6 +428,24 @@ export class CubeGestures {
     onValue: (value: number) => void,
     onDone?: () => void,
   ): void {
+    if (prefersReducedMotion()) {
+      // Still animated, because a turn that teleports is harder to follow than one
+      // that moves -- just short, linear, and with no overshoot to read as bounce.
+      const start = this.scheduler.now();
+      const glide = (): void => {
+        const t = Math.min(1, (this.scheduler.now() - start) / REDUCED_SETTLE_MS);
+        onValue(from + (to - from) * t);
+        if (t < 1) {
+          this.animation = this.scheduler.raf(glide);
+          return;
+        }
+        this.animation = 0;
+        onDone?.();
+      };
+      this.animation = this.scheduler.raf(glide);
+      return;
+    }
+
     let x = from;
     let v = velocity;
     let last = this.scheduler.now();

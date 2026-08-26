@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { applyMove, stickersOf, TURNS, type CubeState, type Face, type Move, type TurnBase, type Vec3 } from '../../cube/state';
 import { BODY_COLOR, SHADE, type Palette } from './palette';
+import { prefersReducedMotion } from './motion';
 
 const CUBIE = 0.98; // leaves a hairline of black between cubies
 const SPACING = 1.0;
@@ -174,8 +175,10 @@ export class CubeRenderer {
     };
 
     // Frames do not run while the document is hidden. Land immediately rather than
-    // leaving the stage showing a position the logic has already moved past.
-    if (typeof document !== 'undefined' && document.hidden) {
+    // leaving the stage showing a position the logic has already moved past. The same
+    // immediate landing serves reduced motion: this animation is decorative, and its
+    // whole job is to fill a wait somebody has asked not to watch.
+    if (prefersReducedMotion() || (typeof document !== 'undefined' && document.hidden)) {
       onDone?.();
       return () => {};
     }
