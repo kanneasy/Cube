@@ -109,6 +109,8 @@ const pointer = (canvas: HTMLCanvasElement, type: string, x: number, y: number, 
 
 interface Harness {
   commits: Move[];
+  /** Every pointerdown that landed on the cube, for the stage-one acknowledgement. */
+  touches: number[];
   grabs: string[];
   /** Every time the provisional axis changed hands mid-gesture. */
   switches: string[];
@@ -119,10 +121,11 @@ interface Harness {
 function setup(coords: Vec3 = [1, -1, 1], opts: { hits?: boolean } = {}) {
   const clock = fakeScheduler();
   const { renderer, canvas, layerCalls, orbits, spins, zooms, resets } = mockRenderer(coords, opts);
-  const h: Harness = { commits: [], grabs: [], switches: [], detents: 0, releases: 0 };
+  const h: Harness = { commits: [], touches: [], grabs: [], switches: [], detents: 0, releases: 0 };
   const gestures = new CubeGestures(
     renderer,
     {
+      onTouchCubie: (i) => h.touches.push(i),
       onGrab: (base) => h.grabs.push(base),
       onAxisSwitch: (base) => h.switches.push(base),
       onRelease: () => h.releases++,
@@ -625,5 +628,41 @@ describe('a second finger during a live turn cancels it', () => {
     expect(h.commits).toHaveLength(0);
     // The last word on the layer is "put it down", not a frozen mid-turn angle.
     expect(layerCalls[layerCalls.length - 1]).toEqual({ base: null, angle: 0 });
+  });
+});
+
+describe('the grab acknowledgement fires in two stages', () => {
+  it('acknowledges the cubie at touch-down, before anything has resolved', () => {
+    // The whole point: onGrab needs travel, so on a slow press it is hundreds of
+    // milliseconds away and on a press that never moves it never arrives at all. The
+    // 60ms budget the spec asks for was unmeetable until this fired here.
+    const { canvas, h } = setup();
+    pointer(canvas, 'pointerdown', 200, 250);
+    expect(h.touches).toEqual([0]);
+    expect(h.grabs).toHaveLength(0);
+  });
+
+  it('expands to the layer at engage', () => {
+    const { clock, canvas, h } = setup();
+    pointer(canvas, 'pointerdown', 200, 250);
+    clock.advance(16);
+    pointer(canvas, 'pointermove', 200, 238);
+    expect(h.touches).toEqual([0]);
+    expect(h.grabs).toEqual(['R']);
+  });
+
+  it('does not acknowledge a touch that landed on the background', () => {
+    const { canvas, h } = setup([1, -1, 1], { hits: false });
+    pointer(canvas, 'pointerdown', 200, 250);
+    expect(h.touches).toHaveLength(0);
+    expect(h.releases).toBeGreaterThan(0); // and it clears whatever was showing
+  });
+
+  it('clears when a second finger takes the gesture over', () => {
+    const { canvas, h } = setup();
+    pointer(canvas, 'pointerdown', 200, 250, 1);
+    expect(h.touches).toHaveLength(1);
+    pointer(canvas, 'pointerdown', 300, 250, 2);
+    expect(h.releases).toBeGreaterThan(0);
   });
 });

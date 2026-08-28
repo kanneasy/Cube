@@ -136,6 +136,14 @@ const TURN_SPRING = { stiffness: 580, damping: 26.5, mass: 0.52 };
 const REFUSE_SPRING = { stiffness: 700, damping: 34, mass: 0.5 };
 
 export interface GestureCallbacks {
+  /**
+   * A finger landed on a cubie. Fires at pointerdown, before anything is resolved.
+   *
+   * This is the half that meets the acknowledgement's 60ms budget: `onGrab` cannot,
+   * because it needs travel, so on a slow press it is hundreds of milliseconds away and
+   * on a press that never moves it never arrives.
+   */
+  onTouchCubie(cubieIndex: number): void;
   /** A layer has been grabbed. Used to lift the layer and trace its boundary. */
   onGrab(base: TurnBase): void;
   /** The provisional axis changed hands. The grab treatment moves with it; no tick. */
@@ -547,6 +555,7 @@ export class CubeGestures {
       // fight over orientation and zoom every frame.
       this.stopAnimation();
       if (live) this.cancelTurn(live);
+      else this.callbacks.onRelease();
       this.drag = {
         kind: 'pinch',
         startSpan: this.pinchDistance(),
@@ -594,6 +603,7 @@ export class CubeGestures {
         startY: event.clientY,
         history: [{ t: this.pressedAt, x: event.clientX, y: event.clientY }],
       };
+      this.callbacks.onTouchCubie(hit.cubieIndex);
       return;
     }
 
@@ -603,6 +613,7 @@ export class CubeGestures {
       lastY: event.clientY,
       history: [{ t: this.scheduler.now(), x: event.clientX, y: event.clientY }],
     };
+    this.callbacks.onRelease();
   };
 
   // The state mutation happens synchronously here and only the redraw is left to the
@@ -631,6 +642,7 @@ export class CubeGestures {
             history: [{ t: drag.t, x: drag.x, y: drag.y }],
           }
         : { kind: 'orbit', lastX: drag.x, lastY: drag.y, history: [{ t: drag.t, x: drag.x, y: drag.y }] };
+      if (hit) this.callbacks.onTouchCubie(hit.cubieIndex);
       // Only ever pending or orbit, which is what keeps `deferred` out of the union below.
       drag = this.drag as PendingDrag | OrbitDrag;
     }

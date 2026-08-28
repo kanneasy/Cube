@@ -68,6 +68,70 @@ interface CubieRef {
 
 const AXIS_VECTORS = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
 
+/**
+ * The grab acknowledgement.
+ *
+ * iOS Safari has no haptics, so nothing else in this app can tell you a touch registered
+ * or which layer it caught. `visual.md` has required this since the first spec and it was
+ * never built: `onGrab` fired and the app used it only to unlock audio, so until the
+ * layer visibly moved there was no confirmation at all -- and if the axis had resolved
+ * wrongly, the first confirmation you got was the wrong face turning.
+ *
+ * Two stages, because the two things knowable are knowable at different moments. At
+ * touch-down the only fact is which cubie is under the thumb, so a RING traces that
+ * cubie's face. At engage the layer is known, so the ring gives way to the SEAM -- the
+ * cut plane the layer will shear along.
+ *
+ * The seam, not a silhouette. A silhouette of a 3x3x1 slab is a screen-space computation
+ * whose topology changes as the cube rotates; the cut is one closed square loop in the
+ * cube's own frame, known in closed form, and parented to the root so it rotates for
+ * free. It also falls exactly in the 0.02-unit gap the geometry already leaves between
+ * cubie rows, so it does not overlay the cube -- it lights a groove that is already there.
+ */
+const GRAB_SURFACE_OFFSET = 0.008;
+/** Screen-space floor, so the line does not thin to a shimmer when zoomed out... */
+const GRAB_HAIRLINE_PX = 1.2;
+/** ...and the groove's own width above about f = 0.53, so it reads as the groove lighting up. */
+const GRAB_HAIRLINE_WORLD = 0.02;
+const GRAB_OPACITY = 0.62;
+/**
+ * The body carries the lift, not the stickers.
+ *
+ * A multiply on an sRGB-encoded bright colour is compressed to almost nothing: Verde at
+ * 1.06 moves byte 188 to 194, which is invisible, and that -- not the clamp -- is why the
+ * specified sticker lift never read. The body is #141518 on a ramp already running 0.50
+ * to 3.00, so it has real headroom, and because the body IS the grout between stickers,
+ * lifting it draws the grabbed layer's 3x3 grid. Unclamped, in linear light.
+ */
+const GRAB_LIFT_BODY = 1.55;
+/** Supporting only, so the stickers move with the grout instead of looking dead beside it. */
+const GRAB_LIFT_STICKER = 1.1;
+const GRAB_IN_MS = 50;
+const GRAB_EXPAND_MS = 80;
+const GRAB_OUT_MS = 120;
+
+/** Two triangles through four coplanar corners, in the cube's own frame. */
+function quad(corners: THREE.Vector3[]): THREE.BufferGeometry {
+  const [a, b, c, d] = corners;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(
+      [a, b, c, a, c, d].flatMap((v) => [v.x, v.y, v.z]),
+      3,
+    ),
+  );
+  return g;
+}
+
+const vec = (axis: number, value: number, other: number, otherValue: number, third: number, thirdValue: number) => {
+  const p = new THREE.Vector3();
+  p.setComponent(axis, value);
+  p.setComponent(other, otherValue);
+  p.setComponent(third, thirdValue);
+  return p;
+};
+
 /** BoxGeometry's material groups, in order, as local face normals. */
 const BOX_FACE_NORMALS = [
   new THREE.Vector3(1, 0, 0),
@@ -126,6 +190,31 @@ export class CubeRenderer {
   private concealed = false;
   private liveBase: TurnBase | null = null;
   private liveAngle = 0;
+
+  /** The acknowledgement's own scene graph, rebuilt when what is held changes. */
+  private readonly grabGroup = new THREE.Group();
+  private readonly grabMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    // Additive is right in a renderer with flat materials, no lights and a black room:
+    // the line lifts whatever is under it rather than replacing it, so the same line
+    // survives on near-black plastic and on a saturated sticker. depthTest stays ON --
+    // the far side of the loop has to be hidden, or it reads as a wireframe box around
+    // the cube rather than a groove cut into a solid.
+    blending: THREE.AdditiveBlending,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    depthTest: true,
+    side: THREE.DoubleSide,
+  });
+  private touchedCubie: number | null = null;
+  private grabbedBase: TurnBase | null = null;
+  /** 0 to 1. Drives both the line's opacity and the layer's lift. */
+  private grabAmount = 0;
+  private grabTarget = 0;
+  private grabRampMs = GRAB_IN_MS;
+  private grabLastFrame = 0;
+  private grabHairline = GRAB_HAIRLINE_WORLD;
   private frameHandle = 0;
   private readonly resizeObserver: ResizeObserver | null;
 
@@ -142,6 +231,7 @@ export class CubeRenderer {
 
     this.camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 100);
     this.scene.add(this.root);
+    this.root.add(this.grabGroup);
     this.buildCubies();
     this.resize();
 
@@ -284,6 +374,134 @@ export class CubeRenderer {
    * Hide what the cube is showing without hiding the cube. Competition inspection begins
    * when the scramble is revealed, so before that it must genuinely not be readable.
    */
+  // ---- the grab acknowledgement ----
+
+  /**
+   * Stage one: the cubie under the thumb, at touch-down.
+   *
+   * This is what meets the 60ms budget the spec asks for. The old spec fired the
+   * acknowledgement at axis resolution, which needs travel -- on a slow press that is
+   * hundreds of milliseconds, and on a press that never moves it never fires at all. The
+   * budget was unmeetable by construction until it moved here.
+   */
+  setTouched(cubieIndex: number | null): void {
+    if (this.touchedCubie === cubieIndex) return;
+    this.touchedCubie = cubieIndex;
+    if (cubieIndex !== null) this.grabbedBase = null;
+    this.rebuildGrab(GRAB_IN_MS);
+  }
+
+  /** Stage two: the layer, once the axis is known. The ring gives way to the seam. */
+  setGrabbed(base: TurnBase | null): void {
+    if (this.grabbedBase === base && base !== null) return;
+    this.grabbedBase = base;
+    if (base !== null) this.touchedCubie = null;
+    this.rebuildGrab(base === null ? GRAB_OUT_MS : GRAB_EXPAND_MS);
+  }
+
+  /** Let go of everything, on the slower outgoing ramp. */
+  clearGrab(): void {
+    if (this.touchedCubie === null && this.grabbedBase === null) return;
+    this.touchedCubie = null;
+    this.grabbedBase = null;
+    this.rebuildGrab(GRAB_OUT_MS);
+  }
+
+  private rebuildGrab(rampMs: number): void {
+    for (const child of [...this.grabGroup.children]) {
+      this.grabGroup.remove(child);
+      (child as THREE.Mesh).geometry.dispose();
+    }
+
+    this.grabHairline = Math.max(GRAB_HAIRLINE_WORLD, GRAB_HAIRLINE_PX / (this.unitPx || 1));
+    this.grabRampMs = rampMs;
+    this.grabTarget = this.touchedCubie !== null || this.grabbedBase !== null ? 1 : 0;
+
+    for (const geometry of this.grabGeometry()) {
+      this.grabGroup.add(new THREE.Mesh(geometry, this.grabMaterial));
+    }
+  }
+
+  private grabGeometry(): THREE.BufferGeometry[] {
+    const w = this.grabHairline;
+    const out: THREE.BufferGeometry[] = [];
+
+    if (this.touchedCubie !== null) {
+      // A square ring centred in the grout between the sticker edge and the cubie edge,
+      // so it works on either palette's inset without being told which.
+      const cubie = this.cubies[this.touchedCubie];
+      if (!cubie) return out;
+      const r = (CUBIE * (1 - this.palette.stickerInset * 2) + CUBIE) / 4;
+      const [o, i] = [r + w / 2, r - w / 2];
+      // Every outward face of the touched cubie: the thumb is on one of them, and which
+      // one is not worth a second raycast when the cube hides the rest anyway.
+      for (let axis = 0; axis < 3; axis++) {
+        if (cubie.coords[axis] === 0) continue;
+        const sign = Math.sign(cubie.coords[axis]);
+        const [u, v] = [0, 1, 2].filter((a) => a !== axis);
+        const at = cubie.basePosition.getComponent(axis) + sign * (CUBIE / 2 + GRAB_SURFACE_OFFSET);
+        const cu = cubie.basePosition.getComponent(u);
+        const cv = cubie.basePosition.getComponent(v);
+        for (const [u0, u1, v0, v1] of [
+          [-o, o, i, o],
+          [-o, o, -o, -i],
+          [-o, -i, -i, i],
+          [i, o, -i, i],
+        ]) {
+          out.push(
+            quad([
+              vec(axis, at, u, cu + u0, v, cv + v0),
+              vec(axis, at, u, cu + u1, v, cv + v0),
+              vec(axis, at, u, cu + u1, v, cv + v1),
+              vec(axis, at, u, cu + u0, v, cv + v1),
+            ]),
+          );
+        }
+      }
+      return out;
+    }
+
+    if (this.grabbedBase === null) return out;
+    const spec = TURNS[this.grabbedBase];
+    // A slice takes TWO cuts, and showing both is honest: it is the same fact that makes
+    // a slice cost two under OBTM.
+    const cuts = spec.layer === 0 ? [-0.5, 0.5] : [spec.layer * 0.5];
+    const face = 1.5 - (SPACING - CUBIE) / 2 + GRAB_SURFACE_OFFSET;
+    const reach = 1.5 - (SPACING - CUBIE) / 2 + w / 2;
+
+    for (const cut of cuts) {
+      for (const side of [0, 1, 2].filter((a) => a !== spec.axis)) {
+        const third = [0, 1, 2].find((a) => a !== spec.axis && a !== side)!;
+        for (const sign of [-1, 1]) {
+          out.push(
+            quad([
+              vec(side, sign * face, spec.axis, cut - w / 2, third, -reach),
+              vec(side, sign * face, spec.axis, cut - w / 2, third, reach),
+              vec(side, sign * face, spec.axis, cut + w / 2, third, reach),
+              vec(side, sign * face, spec.axis, cut + w / 2, third, -reach),
+            ]),
+          );
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Ease the acknowledgement toward its target. Linear: an ease-in reads as hesitation. */
+  private stepGrab(): void {
+    const now = performance.now();
+    const dt = this.grabLastFrame ? Math.min(64, now - this.grabLastFrame) : 0;
+    this.grabLastFrame = now;
+    if (this.grabAmount === this.grabTarget) return;
+
+    const step = prefersReducedMotion() ? 1 : dt / this.grabRampMs;
+    this.grabAmount =
+      this.grabTarget > this.grabAmount
+        ? Math.min(this.grabTarget, this.grabAmount + step)
+        : Math.max(this.grabTarget, this.grabAmount - step);
+    this.grabMaterial.opacity = this.grabAmount * GRAB_OPACITY;
+  }
+
   setConcealed(concealed: boolean): void {
     this.concealed = concealed;
   }
@@ -486,7 +704,13 @@ export class CubeRenderer {
         // Three.js holds colours in linear working space and converts on output, so
         // multiplying here IS multiplying in linear light, which is what the ramp
         // specifies. Multiplying the sRGB bytes lands a few points off and desaturates.
-        sticker.material.color.copy(this.concealed ? CONCEALED_COLOR : sticker.base).multiplyScalar(shadeFor(n, ramp));
+        const lift =
+          this.grabbedBase !== null && cubie.coords[TURNS[this.grabbedBase].axis] === TURNS[this.grabbedBase].layer
+            ? 1 + (GRAB_LIFT_STICKER - 1) * this.grabAmount
+            : 1;
+        sticker.material.color
+          .copy(this.concealed ? CONCEALED_COLOR : sticker.base)
+          .multiplyScalar(shadeFor(n, ramp) * lift);
       }
     }
 
@@ -501,16 +725,23 @@ export class CubeRenderer {
     for (let i = 0; i < 6; i++) {
       n.copy(BOX_FACE_NORMALS[i]).applyQuaternion(this.orientation);
       this.restingBody[i].color.copy(BODY_BASE).multiplyScalar(this.concealed ? 1 : shadeFor(n, SHADE_BODY));
+      // The lift rides the TURNING set, which is already exactly the grabbed layer --
+      // and it is gated on `grabAmount` rather than on liveBase, so a replay or an
+      // auto-scramble, which also sets liveBase, does not light layers up in sequence.
+      const lift = 1 + (GRAB_LIFT_BODY - 1) * this.grabAmount;
       if (liveQ) {
         q.copy(this.orientation).multiply(liveQ);
         n.copy(BOX_FACE_NORMALS[i]).applyQuaternion(q);
       }
-      this.turningBody[i].color.copy(BODY_BASE).multiplyScalar(this.concealed ? 1 : shadeFor(n, SHADE_BODY));
+      this.turningBody[i].color
+        .copy(BODY_BASE)
+        .multiplyScalar((this.concealed ? 1 : shadeFor(n, SHADE_BODY)) * lift);
     }
   }
 
   private loop = (): void => {
     this.frameHandle = requestAnimationFrame(this.loop);
+    this.stepGrab();
     this.root.quaternion.copy(this.orientation);
     this.camera.updateMatrixWorld();
     this.applyTransforms();

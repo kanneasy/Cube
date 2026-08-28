@@ -104,20 +104,27 @@ export function App() {
     const audio = audioRef.current;
 
     const gestures = new CubeGestures(renderer, {
-      onGrab: () => {
+      // Moved off onGrab, which needs travel to fire. This is earlier in every case and
+      // is what puts the acknowledgement inside its 60ms budget.
+      onTouchCubie: (cubieIndex) => {
+        renderer.setTouched(cubieIndex);
         audio.unlock();
         setFirstRunSeen(true);
         writeFlag(FIRST_RUN_KEY);
       },
-      onAxisSwitch: () => {},
-      onRelease: () => {},
+      onGrab: (base) => renderer.setGrabbed(base),
+      onAxisSwitch: (base) => renderer.setGrabbed(base),
+      onRelease: () => renderer.clearGrab(),
       onDetent: () => audio.tick(),
       onSnapStart: (settleMs) => {
         // Fired while the layer is still moving: 70ms in it is about three-quarters
         // home, which is perceptually the moment it seats.
         window.setTimeout(() => audio.clack(), Math.min(70, settleMs * 0.6));
       },
-      onCommit: (move) => solveRef.current.dispatch({ type: 'turn', move, at: performance.now() }),
+      onCommit: (move) => {
+        renderer.clearGrab();
+        solveRef.current.dispatch({ type: 'turn', move, at: performance.now() });
+      },
     });
 
     const onResize = () => renderer.resize();
