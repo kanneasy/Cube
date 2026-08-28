@@ -192,7 +192,7 @@ app, `code-reviewer` on `dist/`, `design-critic` on the rendered UI, and the ima
 | Dragging the background orbits the whole cube and is never logged as a move | @tests | **PASS** — orbit never calls `onCommit`; `obtmCost` never sees a rotation |
 | Each turn plays a distinct sound, the only tactile feedback since iOS gives none | — | **NOT GATED** — three synthesised layers with per-strike variation exist and are wired to the detent, snap and refusal, but no verifier here can hear them |
 | The rendered cube reads as flat, saturated, hard-edged color, not glossy plastic | @design-critic | **PASS** — flat per-face colour, hard grid lines, zero specular/gradient/AO |
-| Turning and orbiting feel natural and satisfying on a real installed iPhone | @user | **OPEN** — only a thumb on real hardware can answer this |
+| Turning and orbiting feel natural and satisfying on a real installed iPhone | @user | **OPEN** — reported FAILING by the user on 2026-08-28 and reworked since: the axis is read from the recent stroke rather than from touch-down (which summed the thumb roll in and picked the wrong layer), a wrong pick self-corrects inside a provisional window, release velocity is windowed rather than a single frame, a settling turn no longer swallows the next touch, and two fingers now roll as well as tumble and zoom. Numbers came from design; only a thumb on real hardware can close it. |
 
 ### 2. Casual Solve — 5 scenarios, 5 passed
 
@@ -276,7 +276,7 @@ app, `code-reviewer` on `dist/`, `design-critic` on the rendered UI, and the ima
 
 | Scenario | Verifier | Verdict |
 |---|---|---|
-| Adding the app to the home screen uses the final icon set, present before install | @image | **PASS** — 28/32 after three attempts; opaque black and even margins verified by pixel sampling |
+| Adding the app to the home screen uses the final icon set, present before install | @image | **PASS** — 32/32 on the drawn master (2026-08-28). Three generations failed the same instruction before it; the tile is now rendered deterministically from the app's own geometry and palette, so the defect class is impossible rather than merely absent. Anyone who installed before this keeps the old tile: iOS copies the icon into SpringBoard once and never re-reads it. |
 | The installed app launches full-screen with no browser chrome, in standalone display mode | @user | **OPEN** — the manifest declares it; only an iPhone can confirm it |
 | The app loads and functions with the network fully disabled | @user | **OPEN** — 35 precached entries including the solver's wasm; not exercised offline here |
 | Launching from a plain Safari tab shows a one-time notice about installing | @qa | **PASS** — now genuinely one-time and dismissible |
