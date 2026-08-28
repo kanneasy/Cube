@@ -12,9 +12,9 @@ import { asResult, dailyAttempts, fastestBoard, fewestMovesBoard, patternBest, t
 import { PATTERNS } from '../../cube/patterns';
 import { FACE_ORDER, FACE_WORDS, PALETTES, type PaletteId } from '../cube/palette';
 import { Mark } from './Mark';
-import { ABOUT_PARAGRAPHS, EMPTY_STATES, FEWEST_MOVES_DISCLOSURE, MODE_ROWS } from './copy';
+import { ABOUT_PARAGRAPHS, CONTROLS, EMPTY_STATES, FEWEST_MOVES_DISCLOSURE, MODE_ROWS } from './copy';
 
-type Route = 'menu' | 'records' | 'patterns' | 'settings' | 'about' | 'mode';
+type Route = 'menu' | 'records' | 'patterns' | 'settings' | 'about' | 'mode' | 'controls';
 type Segment = 'fastest' | 'fewest' | 'history';
 
 interface Props {
@@ -76,6 +76,7 @@ export function Sheets(props: Props) {
     : route === 'patterns' ? 'PATTERNS'
     : route === 'settings' ? 'SETTINGS'
     : route === 'mode' ? 'TIMER MODE'
+    : route === 'controls' ? 'CONTROLS'
     : 'ABOUT';
 
   return (
@@ -110,6 +111,10 @@ export function Sheets(props: Props) {
               ['RECORDS', 'Fastest, fewest moves, and every solve.', () => setRoute('records')],
               ['DAILY SCRAMBLE', "One scramble a day. Today's attempts sit on their own board.", props.onStartDaily],
               ['PATTERNS', 'Checkerboard, cube in a cube, superflip.', () => setRoute('patterns')],
+              // Blurbs on this list preview the destination's OWN row names rather than
+              // summarising it -- which is what makes the menu searchable by eye, and why
+              // this one reads as a list rather than a sentence.
+              ['CONTROLS', 'Turn, look around, two fingers, reset.', () => setRoute('controls')],
               ['SETTINGS', 'Palette, sound, timer mode, about.', () => setRoute('settings')],
             ].map(([label, blurb, go]) => (
               <li key={label as string}>
@@ -117,6 +122,19 @@ export function Sheets(props: Props) {
                   <span className="menu__label">{label as string}</span>
                   <span className="menu__blurb">{blurb as string}</span>
                 </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {route === 'controls' && (
+          <ul className="board__list menu">
+            {CONTROLS.map(([label, blurb]) => (
+              <li key={label}>
+                <div className="menu__row">
+                  <span className="menu__label">{label}</span>
+                  <span className="menu__blurb">{blurb}</span>
+                </div>
               </li>
             ))}
           </ul>

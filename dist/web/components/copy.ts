@@ -81,4 +81,27 @@ export const FIRST_RUN = [
  */
 export const VIEW_RESET_HINT = 'DOUBLE TAP TO RESET';
 
+/**
+ * The durable reference for the gestures.
+ *
+ * The first-run card is the right carrier for someone already dragging correctly, but it
+ * is gone after one gesture and there was no second location -- the menu and the About
+ * screen cover rules and scoring and never mention controls. A user who could not find a
+ * gesture had nowhere to go and look, which is close to verbatim what one reported.
+ *
+ * A deeper register than the card, deliberately: the card catches a thumb mid-motion and
+ * teaches the next second, this is opened by someone who already failed to find
+ * something once and has attention to spend. Same facts, one layer down -- the
+ * quarter-turn limit, momentum, and that a reset is never charged as a move.
+ */
+export const CONTROLS = [
+  ['TURN', 'Drag a sticker to turn its layer, one quarter at a time.'],
+  ['LOOK AROUND', 'Drag the background to look around the cube. Flick it and it keeps spinning.'],
+  ['TWO FINGERS', 'Pinch to zoom, drag to look around, and twist to roll — anywhere, even on the cube.'],
+  [
+    'RESET',
+    'Double tap anywhere to snap the view back to center, zoom included — it’s never logged as a move.',
+  ],
+] as const;
+
 export const HOLD_LABEL = 'HOLD BOTH TO START';

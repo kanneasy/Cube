@@ -152,7 +152,7 @@ actually judged.
 
 ## Menu sheet
 
-Title `Menu`. Four rows, the app's four destinations:
+Title `Menu`. Five rows, the app's five destinations:
 
 ~~~ menu-sheet
 Records
@@ -164,9 +164,50 @@ Today's scramble, and yesterday's best.
 Patterns
 Checkerboard, cube in a cube, superflip.
 
+Controls
+Turn, look around, two fingers, reset.
+
 Settings
 Palette, sound, timer mode, about.
 ~~~
+
+Every blurb on this list previews the destination's **own row names**, lowercased and
+comma-joined, rather than summarising it. That is what makes the menu searchable by eye
+rather than by reading, and it is why `Controls` reads as a list and not as a sentence.
+
+## Controls sheet
+
+Title `Controls`. The durable reference for the gestures, and the answer to a real
+report: a user asked for two-finger zoom and rotate for a gesture that already worked and
+that they could not find. The first-run card is the right carrier for someone already
+dragging correctly, but it is gone after one gesture and there was nowhere to go and
+look — the menu and About cover rules and scoring and never mentioned controls.
+
+~~~ controls-sheet
+TURN
+Drag a sticker to turn its layer, one quarter at a time.
+
+LOOK AROUND
+Drag the background to look around the cube. Flick it and it keeps spinning.
+
+TWO FINGERS
+Pinch to zoom, drag to look around, and twist to roll — anywhere, even on the cube.
+
+RESET
+Double tap anywhere to snap the view back to center, zoom included — it's never logged
+as a move.
+~~~
+
+A deeper register than the first-run card, deliberately. The card catches a thumb
+mid-motion and teaches the next second; this is opened by someone who already failed to
+find something once and has attention to spend. Same facts, one layer down: the
+quarter-turn limit, the momentum, and that a reset is never charged as a move.
+
+The roll gesture is taught **here and not on the card**. On a card that flashes once,
+teaching roll hands someone a fourth rule before they have touched anything; on a
+reference someone opened deliberately, omitting it is a gap in the manual.
+
+Rows here do not navigate, so they are not buttons.
 
 ## Records sheet
 
