@@ -109,6 +109,8 @@ const pointer = (canvas: HTMLCanvasElement, type: string, x: number, y: number, 
 interface Harness {
   commits: Move[];
   grabs: string[];
+  /** Every time the provisional axis changed hands mid-gesture. */
+  switches: string[];
   detents: number;
   releases: number;
 }
@@ -116,11 +118,12 @@ interface Harness {
 function setup(coords: Vec3 = [1, -1, 1], opts: { hits?: boolean } = {}) {
   const clock = fakeScheduler();
   const { renderer, canvas, layerCalls, orbits, spins, zooms, resets } = mockRenderer(coords, opts);
-  const h: Harness = { commits: [], grabs: [], detents: 0, releases: 0 };
+  const h: Harness = { commits: [], grabs: [], switches: [], detents: 0, releases: 0 };
   const gestures = new CubeGestures(
     renderer,
     {
       onGrab: (base) => h.grabs.push(base),
+      onAxisSwitch: (base) => h.switches.push(base),
       onRelease: () => h.releases++,
       onCommit: (move) => h.commits.push(move),
       onDetent: () => h.detents++,
@@ -218,6 +221,10 @@ describe('a drag turns a layer and commits it', () => {
     pointer(canvas, 'pointerdown', 200, 250);
     expect(h.commits).toHaveLength(1); // the first turn landed rather than blocking
 
+    // Two moves: the first spends the engage travel, the second is the turn.
+    clock.advance(16);
+    pointer(canvas, 'pointermove', 200, 238);
+    clock.advance(16);
     pointer(canvas, 'pointermove', 200, 180);
     pointer(canvas, 'pointerup', 200, 180);
     expect(clock.flush()).toBe(true);
@@ -331,14 +338,14 @@ describe('the release velocity is read over a window, not one frame', () => {
     const { clock, canvas, h } = setup();
     pointer(canvas, 'pointerdown', 200, 250);
     clock.advance(4);
-    pointer(canvas, 'pointermove', 200, 234);
+    pointer(canvas, 'pointermove', 200, 238); // spends the engage travel
     clock.advance(4);
-    pointer(canvas, 'pointermove', 200, 230);
+    pointer(canvas, 'pointermove', 200, 222); // ~22deg of turn, under every commit gate
     // The pause. A one-frame velocity reads this as a dead stop and kills the flick,
     // which is the "it only rotates a little and returns" report.
     clock.advance(20);
-    pointer(canvas, 'pointermove', 200, 230);
-    pointer(canvas, 'pointerup', 200, 230);
+    pointer(canvas, 'pointermove', 200, 222);
+    pointer(canvas, 'pointerup', 200, 222);
 
     expect(clock.flush()).toBe(true);
     expect(h.commits).toHaveLength(1);
@@ -365,37 +372,67 @@ describe('the release velocity is read over a window, not one frame', () => {
 });
 
 // On this mock the two candidate tangents are (0.749, -0.663) and (1, 0) in screen
-// space, so they tie exactly 20.7 degrees below horizontal. A drag along that line
-// scores both axes the same, and locking there is a coin flip between two different
-// layers -- the "it rotated a face I didn't intend" report.
-const TIE = { x: 0.9353, y: 0.3542 };
-
-describe('the axis lock waits for the drag to mean something', () => {
-  it('does not lock on a drag aimed exactly between the two candidates', () => {
-    const { clock, canvas, h, layerCalls } = setup();
-    dragAlong(canvas, clock, TIE.x, TIE.y, 20); // past AXIS_LOCK_PX, short of AXIS_DECIDE_PX
-    clock.flush();
-    expect(h.grabs).toHaveLength(0);
-    expect(layerCalls).toHaveLength(0);
-    expect(h.commits).toHaveLength(0);
-  });
-
-  it('takes the best candidate anyway once the drag has gone far enough', () => {
-    const { clock, canvas, h } = setup();
-    dragAlong(canvas, clock, TIE.x, TIE.y, 35); // past AXIS_DECIDE_PX
-    clock.flush();
-    expect(h.grabs).toHaveLength(1);
-  });
-
-  it('locks straight away on a drag that plainly means one of them', () => {
+// space. A pure vertical drag means R decisively; a pure horizontal drag means D. That
+// asymmetry is what these tests steer with.
+describe('the axis is read from the stroke, not from the thumb roll', () => {
+  it('engages promptly rather than waiting for certainty', () => {
     const { clock, canvas, h } = setup();
     drag(canvas, clock, 0, -14, { steps: 1 });
     expect(h.grabs).toEqual(['R']);
   });
 
-  it('still ignores a drag that never travels far enough to resolve anything', () => {
+  it('ignores a slow roll that finished before the stroke began', () => {
+    // The thumb's contact patch rolls 9px sideways over 120ms, then the actual stroke
+    // goes vertically. Measured from touch-down the roll dominates at the moment of
+    // engage and picks D -- the wrong layer, and the "it rotated a face I didn't
+    // intend" report. Measured over the last 45ms the roll is simply not in the window.
+    const { clock, canvas, h } = setup();
+    pointer(canvas, 'pointerdown', 200, 250);
+    for (const [t, x] of [
+      [40, 203],
+      [80, 206],
+      [120, 209],
+    ] as const) {
+      clock.advance(t - clock.scheduler.now());
+      pointer(canvas, 'pointermove', x, 250);
+    }
+    clock.advance(8);
+    pointer(canvas, 'pointermove', 209, 244); // the stroke: straight up
+
+    expect(h.grabs).toEqual(['R']);
+    expect(h.switches).toHaveLength(0); // got it right first time, nothing to correct
+  });
+
+  it('hands the axis over when the stroke turns out to mean the other layer', () => {
+    // Here the roll is big enough to engage on its own, so the first pick IS wrong.
+    // The provisional window is what makes that recoverable instead of a failed turn.
+    const { clock, canvas, h } = setup();
+    pointer(canvas, 'pointerdown', 200, 250);
+    clock.advance(16);
+    pointer(canvas, 'pointermove', 211, 250); // 11px sideways: engages, picks D
+    expect(h.grabs).toEqual(['D']);
+
+    clock.advance(16);
+    pointer(canvas, 'pointermove', 211, 240); // and now the real stroke, vertical
+    expect(h.switches).toEqual(['R']);
+  });
+
+  it('stops handing it over once the turn is properly under way', () => {
+    const { clock, canvas, h } = setup();
+    pointer(canvas, 'pointerdown', 200, 250);
+    clock.advance(16);
+    pointer(canvas, 'pointermove', 200, 238); // engage on a clean vertical stroke -> R
+    clock.advance(16);
+    pointer(canvas, 'pointermove', 200, 200); // well past the provisional window
+    clock.advance(16);
+    pointer(canvas, 'pointermove', 260, 200); // a hard sideways yank, far too late
+    expect(h.grabs).toEqual(['R']);
+    expect(h.switches).toHaveLength(0);
+  });
+
+  it('still ignores a drag that never travels far enough to engage', () => {
     const { clock, canvas, h, layerCalls } = setup();
-    drag(canvas, clock, 6, 4, { steps: 2 }); // 7.2px, under AXIS_LOCK_PX
+    drag(canvas, clock, 5, 3, { steps: 2 }); // 5.8px, under TURN_ENGAGE_PX
     clock.flush();
     expect(h.grabs).toHaveLength(0);
     expect(layerCalls).toHaveLength(0);

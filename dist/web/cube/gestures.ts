@@ -24,8 +24,8 @@ const DEG = Math.PI / 180;
  * nearly edge-on has |t| approaching zero, and an uncompensated 1:1 gain explodes; the
  * clamped orbit could never reach that pose and a free one can.
  */
-const TURN_GAIN = 1.06;
-const TANGENT_FLOOR = 0.62;
+const TURN_GAIN = 0.9;
+const TANGENT_FLOOR = 0.68;
 /**
  * One quarter turn is the most a single drag can do, and the layer cannot be dragged
  * past it. Design allowed 180deg of live travel; a fast swipe then carried the layer
@@ -34,37 +34,56 @@ const TANGENT_FLOOR = 0.62;
  */
 const LIVE_CLAMP = 90 * DEG;
 /**
- * Travel before the rotation axis is resolved and then locked for the gesture.
+ * Travel from touch-down before the turn engages.
  *
- * Was 8px, which is inside the distance a thumb's contact patch rolls before the stroke
- * has any direction at all -- so the axis was decided from the noisiest part of the
- * gesture and then held for the rest of it.
+ * Deliberately small. The threshold is no longer doing the disambiguation work -- the
+ * recent-sample window and the switch below do that -- so it only has to clear noise.
+ * It stays 2px above TAP_MAX_PX, which is a hard requirement: a tap must never engage
+ * a turn.
  */
-const AXIS_LOCK_PX = 13;
+const TURN_ENGAGE_PX = 10;
 /**
- * How far the winning axis must beat the runner-up before the lock is taken.
+ * The engage direction is measured over the last 45ms, NOT from touch-down.
  *
- * A sticker offers exactly two candidate axes, and their screen tangents sit roughly 60
- * degrees apart rather than square, so a drag aimed between them scores both almost
- * equally and taking the larger is a coin flip. That coin flip is the "it rotated a face
- * I didn't intend" report. 1.25 means "within about 19 degrees of one tangent"; anything
- * vaguer keeps sampling rather than guessing.
+ * This is the whole fix for "it rotated a face I didn't intend". Measuring from
+ * touch-down sums the thumb's contact-patch roll into the intended stroke and resolves
+ * the axis against the total -- and the roll is a low-velocity wander that has already
+ * finished by the time the stroke starts. Over a recent window it drops out entirely.
  */
-const AXIS_MARGIN = 1.25;
+const AXIS_WINDOW_MS = 45;
+/** The axis stays switchable until the live angle reaches this. */
+const AXIS_PROVISIONAL_DEG = 20 * DEG;
 /**
- * Past this, take the best candidate anyway. A drag that never sharpens still has to turn
- * something -- stalling forever is a worse answer than a considered guess.
+ * ...or until travel from touch-down reaches this, whichever comes first.
+ *
+ * Both gates are needed. The degree gate governs a normal stroke; the pixel gate governs
+ * a stroke running nearly perpendicular to the tangent, where the angle barely grows and
+ * the axis would otherwise stay provisional forever.
  */
-const AXIS_DECIDE_PX = 30;
+const AXIS_PROVISIONAL_PX = 26;
+/**
+ * How far a challenger must beat the incumbent to take the axis over.
+ *
+ * Both tangents are unit vectors, so this ratio is |cos a| / |cos b|. For two tangents
+ * 75 degrees apart on screen it fires about 7 degrees past the bisector: an unambiguous
+ * correction rather than a wobble. Lower and it chatters inside the noise; higher and it
+ * needs a stroke the user has already given up on.
+ */
+const AXIS_SWITCH_RATIO = 1.35;
+/** Release the layer past this much of a quarter and it commits rather than returning. */
+const TURN_COMMIT_FRACTION = 0.35;
 /**
  * Release angular speed at or above which a flick fires in the direction of travel.
  *
- * This was 900deg/s, which is a quarter turn in 100ms -- reachable only by swiping hard.
- * That number was defence against a one-frame release velocity, not a judgement about
- * flicks: a jitter pixel on the last pointermove had to stay under it. The velocity is
- * windowed now, so the threshold can describe an actual flick again.
+ * 520deg/s is about 243px/s at the resting zoom: above what a thumb decelerating into a
+ * lift comes off at, and below a quick swipe. It was 900, which is a quarter turn in
+ * 100ms -- but that number was defence against a one-frame velocity, not a judgement
+ * about flicks. Going much below 520 is its own failure: nearly every release becomes a
+ * flick and the settle branch stops existing.
  */
-const FLICK_RAD_PER_S = 400 * DEG;
+const FLICK_RAD_PER_S = 520 * DEG;
+/** A flick also needs the layer to have actually moved, or a fast 2deg twitch commits. */
+const FLICK_MIN_ANGLE = 8 * DEG;
 
 const ORBIT_DECAY_MS = 400;
 /** Below the rotation this rate of drag produces, momentum simply stops. */
@@ -76,7 +95,7 @@ const ORBIT_CUTOFF_PXPS = 26;
  */
 const VELOCITY_WINDOW_MS = 60;
 
-/** A tap: short, and under the axis-lock threshold, so it can never have turned a layer. */
+/** A tap: short, and under the engage threshold, so it can never have turned a layer. */
 const TAP_MAX_MS = 220;
 const TAP_MAX_PX = 8;
 const DOUBLE_TAP_MS = 280;
@@ -85,11 +104,33 @@ const VIEW_RESET_MS = 260;
 /** Pinch travels a little before it engages, so resting two fingers is not a zoom. */
 const PINCH_THRESHOLD_PX = 12;
 
-const TURN_SPRING = { stiffness: 520, damping: 26, mass: 0.55 };
+/**
+ * The detent fires at the COMMIT boundary, not at the rounding boundary.
+ *
+ * It used to tick at 45deg, which was also where a turn committed, so the tick meant
+ * "let go now and it turns". With the commit at 0.35 of a quarter, a tick at 45 would
+ * fire 13.5deg after the turn became inevitable -- feedback about a rounding operation.
+ * On a device with no haptics this tick is the only thing that teaches where the
+ * threshold is, so it moves to the threshold.
+ */
+const DETENT_FIRE = TURN_COMMIT_FRACTION * 90 * DEG;
+/** Re-arms coming back, so a wobble on the boundary cannot chatter. */
+const DETENT_RELEASE = 24 * DEG;
+
+/**
+ * Damping ratio 0.763, about 2.5% overshoot, settling in ~157ms. Tightened because a
+ * commit now starts from 31.5deg rather than 45, so the spring carries 30% further --
+ * keeping the clock the same is what stops chained turns queueing behind each other.
+ */
+const TURN_SPRING = { stiffness: 580, damping: 26.5, mass: 0.52 };
+/** A turn cancelled by a second finger returns on this. Critically damped enough not to bounce. */
+const REFUSE_SPRING = { stiffness: 700, damping: 34, mass: 0.5 };
 
 export interface GestureCallbacks {
   /** A layer has been grabbed. Used to lift the layer and trace its boundary. */
   onGrab(base: TurnBase): void;
+  /** The provisional axis changed hands. The grab treatment moves with it; no tick. */
+  onAxisSwitch(base: TurnBase): void;
   /** The gesture ended without committing a turn. */
   onRelease(): void;
   /** A quarter turn has settled and should be applied to the logical cube. */
@@ -107,12 +148,26 @@ interface TurnDrag {
   tangent: { x: number; y: number };
   /** How much of that unit tangent survived projection. Feeds the gain. */
   tangentLength: number;
+  /** Kept so the axis can be re-scored while the turn is still provisional. */
+  cubieIndex: number;
+  normal: Vec3;
+  /**
+   * Where the turn started measuring, which is where the finger was at engage -- NOT
+   * where it landed. The engage travel is SPENT, not banked: the layer starts at exactly
+   * 0deg and never pops to an angle the finger already used up getting there.
+   */
+  originX: number;
+  originY: number;
+  /** Touch-down, for the provisional window's pixel backstop. */
   startX: number;
   startY: number;
   angle: number;
   /** Recent angle samples, for a windowed release velocity. The orbit already had this. */
   history: { t: number; angle: number }[];
-  detent: number;
+  /** While true the axis can still be taken over by the other candidate. */
+  provisional: boolean;
+  /** Latched at the commit boundary, re-armed coming back. */
+  detentFired: boolean;
 }
 
 interface PendingDrag {
@@ -122,12 +177,11 @@ interface PendingDrag {
   startX: number;
   startY: number;
   /**
-   * When the finger landed. The turn's velocity window is seeded from here, because the
-   * angle at the moment the axis locks is NOT zero -- the finger has already travelled
-   * AXIS_LOCK_PX. Seeding the window with a zero at lock time claims all of that angle
-   * accrued in the instant of locking, which reads as a flick on a slow, careful drag.
+   * Recent pointer samples, so the engage direction is read over the last AXIS_WINDOW_MS
+   * rather than from touch-down. The difference between those two vectors is exactly the
+   * thumb-roll, and resolving the axis against the roll is what turned the wrong layer.
    */
-  startTime: number;
+  history: { t: number; x: number; y: number }[];
 }
 
 interface OrbitDrag {
@@ -466,7 +520,7 @@ export class CubeGestures {
         normal: hit.worldNormal,
         startX: event.clientX,
         startY: event.clientY,
-        startTime: this.pressedAt,
+        history: [{ t: this.pressedAt, x: event.clientX, y: event.clientY }],
       };
       return;
     }
@@ -502,10 +556,11 @@ export class CubeGestures {
             normal: hit.worldNormal,
             startX: drag.x,
             startY: drag.y,
-            startTime: drag.t,
+            history: [{ t: drag.t, x: drag.x, y: drag.y }],
           }
         : { kind: 'orbit', lastX: drag.x, lastY: drag.y, history: [{ t: drag.t, x: drag.x, y: drag.y }] };
-      drag = this.drag;
+      // Only ever pending or orbit, which is what keeps `deferred` out of the union below.
+      drag = this.drag as PendingDrag | OrbitDrag;
     }
 
     if (drag.kind === 'pinch') {
@@ -538,36 +593,87 @@ export class CubeGestures {
       return;
     }
 
-    const dx = event.clientX - drag.startX;
-    const dy = event.clientY - drag.startY;
+    const now = this.scheduler.now();
 
     if (drag.kind === 'pending') {
-      const travel = Math.hypot(dx, dy);
-      if (travel < AXIS_LOCK_PX) return;
-      const resolved = resolveAxis(this.renderer, drag.cubieIndex, drag.normal, dx, dy);
+      drag.history.push({ t: now, x: event.clientX, y: event.clientY });
+      while (drag.history.length > 2 && now - drag.history[0].t > AXIS_WINDOW_MS) drag.history.shift();
+
+      if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < TURN_ENGAGE_PX) return;
+
+      // The RECENT stroke, not the whole travel. Falls back to the whole travel when
+      // there is only one sample, which is a flick fast enough to have no window.
+      const from = drag.history.length > 1 ? drag.history[0] : { x: drag.startX, y: drag.startY };
+      const resolved = resolveAxis(
+        this.renderer,
+        drag.cubieIndex,
+        drag.normal,
+        event.clientX - from.x,
+        event.clientY - from.y,
+      );
       if (!resolved) return;
-      // Nothing has moved yet, so waiting costs nothing and guessing costs a wrong turn.
-      if (resolved.confidence < AXIS_MARGIN && travel < AXIS_DECIDE_PX) return;
+
       this.drag = {
         kind: 'turn',
         base: resolved.base,
         tangent: resolved.tangent,
         tangentLength: resolved.tangentLength,
+        cubieIndex: drag.cubieIndex,
+        normal: drag.normal,
+        // Spent, not banked: the turn measures from here, so it starts at exactly zero.
+        originX: event.clientX,
+        originY: event.clientY,
         startX: drag.startX,
         startY: drag.startY,
         angle: 0,
-        history: [{ t: drag.startTime, angle: 0 }],
-        detent: 0,
+        history: [{ t: now, angle: 0 }],
+        provisional: true,
+        detentFired: false,
       };
       this.callbacks.onGrab(resolved.base);
-      this.applyTurn(this.drag as TurnDrag, dx, dy);
+      this.applyTurn(this.drag as TurnDrag, 0, 0);
       return;
     }
 
-    this.applyTurn(drag, dx, dy);
+    this.applyTurn(drag, event.clientX - drag.originX, event.clientY - drag.originY);
   };
 
+  /**
+   * Let the other candidate axis take the turn over, for a short window after engage.
+   *
+   * A wrong first guess self-corrects inside a few frames instead of costing a failed
+   * turn and a redo -- which is strictly better than making the user wait longer up
+   * front for certainty, since waiting is the other half of what they complained about.
+   * The window closes well below the commit boundary, so a switch can never take back
+   * something that already looked committed.
+   */
+  private maybeSwitchAxis(drag: TurnDrag, dx: number, dy: number): void {
+    if (!drag.provisional) return;
+    if (
+      Math.abs(drag.angle) >= AXIS_PROVISIONAL_DEG ||
+      Math.hypot(drag.originX + dx - drag.startX, drag.originY + dy - drag.startY) >= AXIS_PROVISIONAL_PX
+    ) {
+      drag.provisional = false;
+      return;
+    }
+
+    const resolved = resolveAxis(this.renderer, drag.cubieIndex, drag.normal, dx, dy);
+    if (!resolved || resolved.base === drag.base) return;
+    if (resolved.confidence < AXIS_SWITCH_RATIO) return;
+
+    // Put the old layer down in the same frame, or it sits frozen mid-turn.
+    this.renderer.setLayerRotation(null, 0);
+    drag.base = resolved.base;
+    drag.tangent = resolved.tangent;
+    drag.tangentLength = resolved.tangentLength;
+    drag.detentFired = false; // nothing was decided about a turn, so no tick
+    this.callbacks.onAxisSwitch(resolved.base);
+  }
+
   private applyTurn(drag: TurnDrag, dx: number, dy: number): void {
+    // The axis can still change hands, and it re-scores against the drag from the origin.
+    this.maybeSwitchAxis(drag, dx, dy);
+
     // Per quarter turn: TURN_GAIN * S * max(floor, |t|) px along the tangent. Stated in
     // the cube's own on-screen units, so a zoomed-in cube is heavier to turn -- the same
     // rule the trackball follows, and physically honest for a bigger object.
@@ -582,12 +688,15 @@ export class CubeGestures {
     drag.history.push({ t, angle });
     while (drag.history.length > 2 && t - drag.history[0].t > VELOCITY_WINDOW_MS) drag.history.shift();
 
-    // The detent: crossing a 45-degree boundary is the moment the nearest quarter turn
-    // changes. It is the difference between dragging a shape and turning a mechanism.
-    const detent = Math.round(angle / (90 * DEG));
-    if (detent !== drag.detent) {
-      drag.detent = detent;
+    // The detent, at the COMMIT boundary: "past this, releasing turns the layer". With
+    // no haptics this tick is the only thing that teaches where the threshold is, so it
+    // has to sit ON the threshold. It re-arms coming back, with hysteresis, so a wobble
+    // on the boundary cannot chatter.
+    if (!drag.detentFired && Math.abs(angle) >= DETENT_FIRE) {
+      drag.detentFired = true;
       this.callbacks.onDetent();
+    } else if (drag.detentFired && Math.abs(angle) <= DETENT_RELEASE) {
+      drag.detentFired = false;
     }
 
     this.renderer.setLayerRotation(drag.base, angle);
@@ -651,17 +760,17 @@ export class CubeGestures {
   private settleTurn(drag: TurnDrag): void {
     const quarter = 90 * DEG;
     const velocity = releaseVelocity(drag.history);
-    // A flick fires to the next quarter turn in the direction of travel even if the
-    // layer has moved less than 45 degrees. That is what makes a flick feel like a
-    // flick rather than like a command.
-    // A flick fires to the next quarter in the direction of travel even under 45deg;
-    // both branches are then held to a single quarter, so a hard swipe and a slow drag
-    // commit the same amount and only the feel differs.
-    const raw =
-      Math.abs(velocity) >= FLICK_RAD_PER_S
-        ? (velocity > 0 ? Math.floor(drag.angle / quarter) + 1 : Math.ceil(drag.angle / quarter) - 1)
-        : Math.round(drag.angle / quarter);
-    const target = Math.max(-1, Math.min(1, raw)) * quarter;
+    // The live angle is clamped to one quarter either way, so this is a threshold rather
+    // than a rounding. A flick fires to the next quarter in the direction of travel even
+    // under the threshold -- but only once the layer has actually moved, or a fast
+    // two-degree twitch on release commits a whole quarter.
+    const flicked = Math.abs(velocity) >= FLICK_RAD_PER_S && Math.abs(drag.angle) >= FLICK_MIN_ANGLE;
+    const quarters = flicked
+      ? Math.sign(velocity)
+      : Math.abs(drag.angle) >= TURN_COMMIT_FRACTION * quarter
+        ? Math.sign(drag.angle)
+        : 0;
+    const target = Math.max(-1, Math.min(1, quarters)) * quarter;
 
     this.callbacks.onSnapStart(170);
 
@@ -834,10 +943,16 @@ export class CubeGestures {
 export const DEFAULTS = {
   TURN_GAIN,
   TANGENT_FLOOR,
+  TURN_ENGAGE_PX,
+  TURN_COMMIT_FRACTION,
   FLICK_RAD_PER_S,
-  AXIS_LOCK_PX,
-  AXIS_MARGIN,
-  AXIS_DECIDE_PX,
+  FLICK_MIN_ANGLE,
+  AXIS_WINDOW_MS,
+  AXIS_PROVISIONAL_DEG,
+  AXIS_PROVISIONAL_PX,
+  AXIS_SWITCH_RATIO,
+  DETENT_FIRE,
+  DETENT_RELEASE,
   PINCH_THRESHOLD_PX,
   ORBIT_DECAY_MS,
   ORBIT_CUTOFF_PXPS,

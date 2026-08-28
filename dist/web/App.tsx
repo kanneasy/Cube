@@ -109,6 +109,7 @@ export function App() {
         setFirstRunSeen(true);
         writeFlag(FIRST_RUN_KEY);
       },
+      onAxisSwitch: () => {},
       onRelease: () => {},
       onDetent: () => audio.tick(),
       onSnapStart: (settleMs) => {
