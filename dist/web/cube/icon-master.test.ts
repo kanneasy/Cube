@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { PALETTES, SHADE, SHADE_BODY, BODY_COLOR } from './palette';
-import { DEFAULT_PITCH, DEFAULT_YAW } from './renderer';
+import { DEFAULT_PITCH, DEFAULT_YAW, ZOOM_REST } from './renderer';
 
 // The home-screen tile is drawn by `dist/scripts/render-icon.mjs`, which cannot import
 // from this TypeScript at all -- it is a standalone node script that shells out to
@@ -38,6 +38,13 @@ describe('the drawn icon master uses the app’s own numbers', () => {
     expect(num('CUBIE')).toBe(0.98);
     expect(num('SPACING')).toBe(1.0);
     expect(num('FOV')).toBe(28);
+  });
+
+  it('derives the camera distance rather than picking one', () => {
+    // The one geometry constant that used to be hand-picked. Derived from these two, so
+    // a change to either cannot silently leave the tile at the old framing.
+    expect(num('ZOOM_REST')).toBe(ZOOM_REST);
+    expect(SOURCE).toContain('const DISTANCE = (1.5 * REFERENCE_STAGE.h)');
   });
 
   it('matches the resting pose, so the tile is the pose the app opens on', () => {

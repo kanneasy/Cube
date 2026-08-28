@@ -32,8 +32,16 @@ const STICKER_INSET = 0.06; // PALETTES.cardinal.stickerInset
 const FOV = 28;
 const DEFAULT_YAW = 0.7853981633974483; // Math.PI / 4
 const DEFAULT_PITCH = 0.41887902047863906; // 24 degrees
-/** The app's resting framing solves to about this on a phone. Mild perspective, not flat. */
-const DISTANCE = 18;
+const ZOOM_REST = 0.45;
+/**
+ * Derived, not picked, so it cannot drift when the resting zoom or the field of view
+ * changes. This is `applyFraming`'s own solve -- distance = 1.5h / (f * w * tan(fov/2))
+ * -- evaluated against a reference phone stage rather than against this square frame.
+ * The phone's framing is the one worth reproducing: the tile should carry the same
+ * amount of perspective the cube has when you are actually looking at it.
+ */
+const REFERENCE_STAGE = { w: 390, h: 524 };
+const DISTANCE = (1.5 * REFERENCE_STAGE.h) / (ZOOM_REST * REFERENCE_STAGE.w * Math.tan((FOV * Math.PI) / 360));
 
 // --- the app's colour (palette.ts) ---
 const FACES = { U: '#ECEFF2', D: '#FFC81E', F: '#0BC25E', B: '#2E7BFF', L: '#FF7A1A', R: '#FA2F45' };

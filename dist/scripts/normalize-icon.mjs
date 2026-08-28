@@ -45,7 +45,6 @@ const CONTENT_FRACTION = 0.8;
  * box has to come in to 0.4 * 2/sqrt(2) = 0.566 for the corners to clear it. 0.56.
  */
 const MASKABLE_FRACTION = 0.56;
-const MASTER = 1024;
 
 const python = `
 import sys
@@ -82,12 +81,16 @@ tm = (size - content.height) // 2
 print(f"{out.split('/')[-1]}  {size}x{size}  margins L/R {lm}/{size - content.width - lm}  T/B {tm}/{size - content.height - tm}")
 `;
 
-const master = join(outDir, 'icon-1024.png');
 const run = (out, size, frac = CONTENT_FRACTION) =>
   console.log('  ' + execFileSync('python3', ['-c', python, source, out, String(size), String(frac)]).toString().trim());
 
 console.log('normalize-icon: flattening onto opaque black and recentring');
-run(master, MASTER);
+
+// No normalised 1024 in the served directory. Nothing references one -- the manifest
+// asks for 192/512/512-maskable, index.html for the 180 -- but the service worker
+// precaches `**/*.png`, so it was 200KB downloaded by every installer and requested by
+// nothing. That is the exact failure the assets-source README exists to describe, and it
+// had quietly recurred one directory further down the same pipeline.
 
 // Every variant is derived from the SAME normalised geometry rather than from each
 // other, so a rounding error cannot compound down the chain.
