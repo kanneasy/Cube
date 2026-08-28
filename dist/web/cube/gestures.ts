@@ -103,6 +103,15 @@ const VIEW_RESET_MS = 260;
 
 /** Pinch travels a little before it engages, so resting two fingers is not a zoom. */
 const PINCH_THRESHOLD_PX = 12;
+/**
+ * Relative twist before roll engages.
+ *
+ * A two-finger grip maps three degrees of freedom onto one hand, so an ordinary pinch
+ * leaks 3-6 degrees of incidental rotation over its course. A cube that quietly tilts
+ * every time you zoom is worse than one that never rolls, and this deadzone is the whole
+ * defence against that. Spent, not banked, so the cube never jumps 9 degrees at engage.
+ */
+const TWIST_ENGAGE = 9 * DEG;
 
 /**
  * The detent fires at the COMMIT boundary, not at the rounding boundary.
@@ -205,6 +214,14 @@ interface PinchDrag {
   startZoom: number;
   lastCentroid: { x: number; y: number };
   engaged: boolean;
+  /** Last raw angle between the contacts, for unwrapping across the +/-pi seam. */
+  lastTwist: number;
+  /** Unwrapped twist since the pinch baselined. */
+  twist: number;
+  /** Frozen at engage so the deadzone stays spent even if the twist reverses through zero. */
+  rollOffset: number | null;
+  /** How much roll has already been handed to the renderer. */
+  rollApplied: number;
 }
 
 /**
@@ -223,6 +240,9 @@ interface DeferredDrag {
 }
 
 type Drag = PendingDrag | TurnDrag | OrbitDrag | PinchDrag | DeferredDrag | null;
+
+/** The view axis. The camera never rotates, so this is simply world +z. */
+const ROLL_AXIS = new Vector3(0, 0, 1);
 
 const AXES: Vec3[] = [
   [1, 0, 0],
@@ -325,6 +345,16 @@ export class CubeGestures {
   private animation = 0;
   /** Set while a turn is springing to its target: finishes it early and commits. */
   private landTurn: (() => void) | null = null;
+  /** What a stopped animation still owes, so cancelling one cannot strand the cube. */
+  private onAnimationStopped: (() => void) | null = null;
+  /**
+   * Bumped whenever an animation is stopped or replaced. A frame callback checks it
+   * before doing anything, so a superseded spring cannot keep writing orientation, zoom
+   * or layer rotation behind whatever replaced it -- which is the same "two loops
+   * fighting over the same state" failure `stopAnimation` was written for, arriving one
+   * frame later through a callback that was already queued.
+   */
+  private springGeneration = 0;
   /** Tracked apart from `animation` so a touch can kill a glide without killing a snap. */
   private momentum = 0;
   /**
@@ -391,6 +421,12 @@ export class CubeGestures {
     return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
   }
 
+  /** Screen angle of the vector between the two contacts. Grows CLOCKWISE, y being down. */
+  private pinchAngle(): number {
+    const [a, b] = [...this.pointers.values()];
+    return a && b ? Math.atan2(b.y - a.y, b.x - a.x) : 0;
+  }
+
   private centroid(): { x: number; y: number } {
     const all = [...this.pointers.values()];
     if (all.length === 0) return { x: 0, y: 0 };
@@ -416,10 +452,42 @@ export class CubeGestures {
    * shared handle while the other kept going underneath the next gesture.
    */
   private stopAnimation(): void {
+    this.springGeneration += 1;
     if (this.animation) {
       this.scheduler.caf(this.animation);
       this.animation = 0;
     }
+    // A cancelled turn still has to put its layer down. Without this, stopping the
+    // cancel spring early leaves the layer frozen at whatever angle it had reached.
+    const owed = this.onAnimationStopped;
+    if (owed) {
+      this.onAnimationStopped = null;
+      owed();
+    }
+  }
+
+  /**
+   * A live turn interrupted by a second finger returns to zero and NEVER commits.
+   *
+   * Both the spec and the code were wrong here, differently. The spec ignored the second
+   * finger outright, which fails "two fingers work everywhere" and leaves a rule nobody
+   * can hold. The code tore the turn down instantly, so an accidental brush discarded a
+   * live turn with a snap-back and no explanation -- which reads exactly like the app
+   * refusing. What survives is the load-bearing half: a surprise commit is unforgivable,
+   * so promotion can only ever cancel. Silent: the puzzle did not change, and nothing
+   * was refused.
+   */
+  private cancelTurn(drag: TurnDrag): void {
+    let cleared = false;
+    const clear = (): void => {
+      if (cleared) return;
+      cleared = true;
+      this.onAnimationStopped = null;
+      this.renderer.setLayerRotation(null, 0);
+      this.callbacks.onRelease();
+    };
+    this.spring(drag.angle, 0, 0, REFUSE_SPRING, (v) => this.renderer.setLayerRotation(drag.base, v), clear);
+    this.onAnimationStopped = clear;
   }
 
   /**
@@ -471,20 +539,24 @@ export class CubeGestures {
     // keeps its live rotation applied every frame and sits frozen mid-turn until the
     // user happens to start and finish another turn.
     if (this.pointers.size === 2) {
-      if (this.drag?.kind === 'turn') {
-        this.renderer.setLayerRotation(null, 0);
-        this.callbacks.onRelease();
-      }
+      const live = this.drag?.kind === 'turn' ? this.drag : null;
+      // A turn already RELEASED has expressed the intent to commit; do not take that
+      // back. Only a turn still under the finger is cancelled.
       this.landSettlingTurn();
       // A pinch must not start on top of a running spring or reset either; they would
       // fight over orientation and zoom every frame.
       this.stopAnimation();
+      if (live) this.cancelTurn(live);
       this.drag = {
         kind: 'pinch',
         startSpan: this.pinchDistance(),
         startZoom: this.renderer.getZoom(),
         lastCentroid: this.centroid(),
         engaged: false,
+        lastTwist: this.pinchAngle(),
+        twist: 0,
+        rollOffset: null,
+        rollApplied: 0,
       };
       return;
     }
@@ -568,11 +640,37 @@ export class CubeGestures {
       const centre = this.centroid();
       if (!span || !drag.startSpan) return;
 
-      // The centroid orbits even before the span has moved enough to be a zoom, so two
-      // fingers can always turn the cube.
+      // Three channels, each engaging on its own and none arbitrating with the others.
+      // Picking "the one gesture they must have meant" is what makes a gesture feel like
+      // it is guessing, and it would reproduce the wrong-layer complaint one level up.
+
+      // Centroid -> tumble. Engages immediately, so two fingers can always turn the cube
+      // even zoomed all the way in, where there is no background left to grab.
       this.renderer.orbitBy(centre.x - drag.lastCentroid.x, centre.y - drag.lastCentroid.y);
       drag.lastCentroid = centre;
 
+      // Twist -> roll about the view axis.
+      const raw = this.pinchAngle();
+      let step = raw - drag.lastTwist;
+      while (step > Math.PI) step -= 2 * Math.PI;
+      while (step < -Math.PI) step += 2 * Math.PI;
+      drag.lastTwist = raw;
+      drag.twist += step;
+      if (drag.rollOffset === null && Math.abs(drag.twist) >= TWIST_ENGAGE) {
+        // Frozen here, so twisting back through zero cannot flip the deadzone's sign and
+        // jerk the cube by 18 degrees.
+        drag.rollOffset = Math.sign(drag.twist) * TWIST_ENGAGE;
+      }
+      if (drag.rollOffset !== null) {
+        const target = drag.twist - drag.rollOffset;
+        // The camera never rotates, so the screen normal IS world +z. Screen angle grows
+        // clockwise while a positive rotation about +z is counter-clockwise from the
+        // camera, so the sign flips.
+        this.renderer.spinBy(ROLL_AXIS, -(target - drag.rollApplied));
+        drag.rollApplied = target;
+      }
+
+      // Span -> zoom.
       if (!drag.engaged && Math.abs(span - drag.startSpan) < PINCH_THRESHOLD_PX) return;
       drag.engaged = true;
       // Fingers apart means a bigger cube: f follows the span directly.
@@ -866,7 +964,9 @@ export class CubeGestures {
     const fromF = this.renderer.getZoom();
     const start = this.scheduler.now();
 
+    const generation = ++this.springGeneration;
     const step = (): void => {
+      if (generation !== this.springGeneration) return;
       const raw = Math.min(1, (this.scheduler.now() - start) / VIEW_RESET_MS);
       // cubic-bezier(0.16, 1, 0.3, 1), near enough for a 260ms view move.
       const p = 1 - (1 - raw) ** 3;
@@ -896,11 +996,15 @@ export class CubeGestures {
     onValue: (value: number) => void,
     onDone?: () => void,
   ): void {
+    const generation = ++this.springGeneration;
+    const superseded = (): boolean => generation !== this.springGeneration;
+
     if (prefersReducedMotion()) {
       // Still animated, because a turn that teleports is harder to follow than one
       // that moves -- just short, linear, and with no overshoot to read as bounce.
       const start = this.scheduler.now();
       const glide = (): void => {
+        if (superseded()) return;
         const t = Math.min(1, (this.scheduler.now() - start) / REDUCED_SETTLE_MS);
         onValue(from + (to - from) * t);
         if (t < 1) {
@@ -919,6 +1023,7 @@ export class CubeGestures {
     let last = this.scheduler.now();
 
     const step = (): void => {
+      if (superseded()) return;
       const t = this.scheduler.now();
       const dt = Math.min(0.032, Math.max(0.001, (t - last) / 1000));
       last = t;

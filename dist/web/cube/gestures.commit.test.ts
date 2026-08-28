@@ -42,7 +42,7 @@ const UNIT_PX = 262 / 2 / (12 * Math.tan((28 * Math.PI) / 360));
 
 function mockRenderer(coords: Vec3, opts: { hits?: boolean } = {}) {
   const orbits: { dx: number; dy: number }[] = [];
-  const spins: number[] = [];
+  const spins: { z: number; radians: number }[] = [];
   const zooms: number[] = [];
   /** Written only by the view reset, so a test can prove a pinch did not trigger one. */
   const resets: number[] = [];
@@ -85,7 +85,8 @@ function mockRenderer(coords: Vec3, opts: { hits?: boolean } = {}) {
     faceWidthPx: () => UNIT_PX * 3,
     setLayerRotation: (base: string | null, angle: number) => layerCalls.push({ base, angle }),
     orbitBy: (dx: number, dy: number) => orbits.push({ dx, dy }),
-    spinBy: () => spins.push(1),
+    spinBy: (axis: { x: number; y: number; z: number }, radians: number) =>
+      spins.push({ z: axis.z, radians }),
     getZoom: () => 1,
     setZoom: (f: number) => zooms.push(f),
     orientationQuaternion: () => new Quaternion(),
@@ -522,5 +523,107 @@ describe('two fingers', () => {
     pointer(canvas, 'pointerup', 200, 250);
     clock.flush();
     expect(resets.length).toBeGreaterThan(0);
+  });
+});
+
+describe('two fingers roll the cube in the screen plane', () => {
+  /** Twist both contacts about their midpoint by `deg`, clockwise on screen. */
+  const twistTo = (canvas: HTMLCanvasElement, deg: number, r = 60) => {
+    const rad = (deg * Math.PI) / 180;
+    // Screen y grows downward, so a positive angle here sweeps clockwise as seen.
+    const dx = Math.cos(rad) * r;
+    const dy = Math.sin(rad) * r;
+    pointer(canvas, 'pointermove', 220 - dx, 250 - dy, 1);
+    pointer(canvas, 'pointermove', 220 + dx, 250 + dy, 2);
+  };
+  const twoDown = (canvas: HTMLCanvasElement) => {
+    pointer(canvas, 'pointerdown', 160, 250, 1);
+    pointer(canvas, 'pointerdown', 280, 250, 2);
+  };
+
+  it('does not roll on the incidental twist an ordinary pinch leaks', () => {
+    const { canvas, spins } = setup();
+    twoDown(canvas);
+    twistTo(canvas, 6); // inside the deadzone: a real pinch wanders about this much
+    expect(spins).toHaveLength(0);
+  });
+
+  it('rolls once the twist is deliberate, and spends the deadzone rather than banking it', () => {
+    const { canvas, spins } = setup();
+    twoDown(canvas);
+    twistTo(canvas, 10); // just past the 9 degree engage
+    const total = spins.reduce((n, s) => n + s.radians, 0);
+    // 1 degree of roll, not 10. Banking the deadzone would jerk the cube at engage.
+    expect(Math.abs(total)).toBeLessThan((2 * Math.PI) / 180);
+    expect(Math.abs(total)).toBeGreaterThan(0);
+  });
+
+  it('rolls about the view axis, in the direction the fingers turned', () => {
+    const { canvas, spins } = setup();
+    twoDown(canvas);
+    twistTo(canvas, 40);
+    const total = spins.reduce((n, s) => n + s.radians, 0);
+    expect(spins.every((sp) => sp.z === 1)).toBe(true); // the screen normal is world +z
+    // Fingers swept clockwise on screen. A positive rotation about +z is counter-
+    // clockwise as the camera sees it, so a clockwise sweep must come out negative.
+    expect(total).toBeLessThan(0);
+    expect(Math.abs(total)).toBeCloseTo(((40 - 9) * Math.PI) / 180, 3); // 1:1 past the deadzone
+  });
+
+  it('rolls, tumbles and zooms in one gesture without arbitrating between them', () => {
+    const { canvas, spins, orbits, zooms } = setup();
+    twoDown(canvas);
+    // One finger swings out and around: the span opens, the midpoint shifts, and the
+    // pair rotates, all at once.
+    pointer(canvas, 'pointermove', 340, 190, 2);
+    expect(spins.length).toBeGreaterThan(0);
+    expect(zooms.length).toBeGreaterThan(0);
+    expect(orbits.reduce((n, o) => n + Math.abs(o.dx) + Math.abs(o.dy), 0)).toBeGreaterThan(0);
+  });
+
+  it('re-baselines the twist when a finger is lifted and replaced', () => {
+    const { canvas, spins } = setup();
+    twoDown(canvas);
+    twistTo(canvas, 40);
+    const after = spins.reduce((n, s) => n + s.radians, 0);
+    pointer(canvas, 'pointerup', 220 + 46, 250 + 39, 2);
+    pointer(canvas, 'pointerdown', 280, 250, 2); // back down somewhere else entirely
+    const rebaselined = spins.reduce((n, s) => n + s.radians, 0);
+    expect(rebaselined).toBeCloseTo(after, 10); // no jump on the re-grip
+  });
+});
+
+describe('a second finger during a live turn cancels it', () => {
+  it('returns the layer to zero and never commits', () => {
+    const { clock, canvas, h } = setup();
+    // A turn well past the commit threshold, still under the finger.
+    pointer(canvas, 'pointerdown', 200, 250, 1);
+    clock.advance(16);
+    pointer(canvas, 'pointermove', 200, 238);
+    clock.advance(16);
+    pointer(canvas, 'pointermove', 200, 190);
+
+    pointer(canvas, 'pointerdown', 300, 250, 2);
+    expect(clock.flush()).toBe(true);
+    // A surprise commit is the one thing that must never happen here.
+    expect(h.commits).toHaveLength(0);
+    expect(h.releases).toBeGreaterThan(0);
+  });
+
+  it('puts the layer down even if the cancel is itself interrupted', () => {
+    const { clock, canvas, h, layerCalls } = setup();
+    pointer(canvas, 'pointerdown', 200, 250, 1);
+    clock.advance(16);
+    pointer(canvas, 'pointermove', 200, 238);
+    clock.advance(16);
+    pointer(canvas, 'pointermove', 200, 190);
+    pointer(canvas, 'pointerdown', 300, 250, 2); // cancel begins
+    pointer(canvas, 'pointerup', 300, 250, 2);
+    pointer(canvas, 'pointerup', 200, 190, 1);
+    pointer(canvas, 'pointerdown', 200, 250, 1); // a fresh touch, mid-cancel
+    clock.flush();
+    expect(h.commits).toHaveLength(0);
+    // The last word on the layer is "put it down", not a frozen mid-turn angle.
+    expect(layerCalls[layerCalls.length - 1]).toEqual({ base: null, angle: 0 });
   });
 });
