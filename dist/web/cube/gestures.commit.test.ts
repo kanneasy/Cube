@@ -199,13 +199,29 @@ describe('a drag turns a layer and commits it', () => {
     expect(h.detents).toBeGreaterThan(0);
   });
 
-  it('ignores a new touch while a turn is still springing', () => {
+  it('lands a settling turn on a new touch instead of eating the touch', () => {
     const { clock, canvas, h } = setup();
     drag(canvas, clock, 0, -90);
-    // Mid-spring: a second grab must not start.
+    expect(h.commits).toHaveLength(0); // still springing
+
+    // The old behaviour dropped this pointerdown outright, and with it the whole
+    // second turn -- about 200ms of dead input after every turn.
     pointer(canvas, 'pointerdown', 200, 250);
+    expect(h.commits).toHaveLength(1); // the first turn landed rather than blocking
+
     pointer(canvas, 'pointermove', 200, 180);
     pointer(canvas, 'pointerup', 200, 180);
+    expect(clock.flush()).toBe(true);
+    expect(h.commits).toHaveLength(2); // and the second turn happened
+  });
+
+  it('commits a landed turn exactly once', () => {
+    // Two things can finish a turn: the spring completing, and a new touch landing it
+    // early. A turn committed twice is a move the user never made.
+    const { clock, canvas, h } = setup();
+    drag(canvas, clock, 0, -90);
+    pointer(canvas, 'pointerdown', 200, 250);
+    pointer(canvas, 'pointerup', 200, 250);
     clock.flush();
     expect(h.commits).toHaveLength(1);
   });

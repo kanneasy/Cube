@@ -153,7 +153,22 @@ interface PinchDrag {
   engaged: boolean;
 }
 
-type Drag = PendingDrag | TurnDrag | OrbitDrag | PinchDrag | null;
+/**
+ * A touch whose raycast is held over to the next move event.
+ *
+ * Landing a still-settling turn on pointerdown fires `onCommit`, which reaches the
+ * renderer through React. The cubie transforms `pickSticker` raycasts are therefore the
+ * PRE-commit ones for the rest of that tick, and picking against them would grab the
+ * piece that used to be under the finger. One event later they are current.
+ */
+interface DeferredDrag {
+  kind: 'deferred';
+  x: number;
+  y: number;
+  t: number;
+}
+
+type Drag = PendingDrag | TurnDrag | OrbitDrag | PinchDrag | DeferredDrag | null;
 
 const AXES: Vec3[] = [
   [1, 0, 0],
@@ -254,6 +269,8 @@ export function releaseVelocity(history: readonly { t: number; angle: number }[]
 export class CubeGestures {
   private drag: Drag = null;
   private animation = 0;
+  /** Set while a turn is springing to its target: finishes it early and commits. */
+  private landTurn: (() => void) | null = null;
   /** Tracked apart from `animation` so a touch can kill a glide without killing a snap. */
   private momentum = 0;
   /**
@@ -392,6 +409,7 @@ export class CubeGestures {
         this.renderer.setLayerRotation(null, 0);
         this.callbacks.onRelease();
       }
+      this.landSettlingTurn();
       // A pinch must not start on top of a running spring or reset either; they would
       // fight over orientation and zoom every frame.
       this.stopAnimation();
@@ -405,13 +423,27 @@ export class CubeGestures {
       return;
     }
     if (this.pointers.size > 2) return;
-    if (this.animating) return;
+
+    // A turn still springing is LANDED, not allowed to eat this touch. It used to be
+    // `if (this.animating) return`, which threw away every pointerdown for the ~200ms
+    // the spring ran: turning at speed silently lost every second turn, and the cube
+    // read as heavy rather than as unresponsive. A view reset or zoom settle has
+    // nothing to commit, so it is simply stopped.
+    const landed = this.landTurn !== null;
+    this.landSettlingTurn();
+    this.stopAnimation();
 
     try {
       this.renderer.canvas.setPointerCapture(event.pointerId);
     } catch {
       // A synthetic or already-captured pointer. Capture keeps a drag alive past the
       // canvas edge; it is not required for the gesture to work.
+    }
+
+    if (landed) {
+      // The commit has not reached the renderer yet. Pick on the next move instead.
+      this.drag = { kind: 'deferred', x: event.clientX, y: event.clientY, t: this.pressedAt };
+      return;
     }
 
     const hit = this.renderer.pickSticker(event.clientX, event.clientY);
@@ -443,9 +475,26 @@ export class CubeGestures {
     if (this.pointers.has(event.pointerId)) {
       this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     }
-    const drag = this.drag;
+    let drag = this.drag;
     if (!drag) return;
     event.preventDefault();
+
+    if (drag.kind === 'deferred') {
+      const hit = this.renderer.pickSticker(drag.x, drag.y);
+      // Measured from where the finger LANDED, not from here, so the turn that follows
+      // is the one the whole stroke asked for.
+      this.drag = hit
+        ? {
+            kind: 'pending',
+            cubieIndex: hit.cubieIndex,
+            normal: hit.worldNormal,
+            startX: drag.x,
+            startY: drag.y,
+            startTime: drag.t,
+          }
+        : { kind: 'orbit', lastX: drag.x, lastY: drag.y, history: [{ t: drag.t, x: drag.x, y: drag.y }] };
+      drag = this.drag;
+    }
 
     if (drag.kind === 'pinch') {
       const span = this.pinchDistance();
@@ -568,6 +617,7 @@ export class CubeGestures {
       // Already released; nothing to undo.
     }
 
+    if (drag.kind === 'deferred') return;
     if (drag.kind === 'pending') {
       this.callbacks.onRelease();
       return;
@@ -596,8 +646,14 @@ export class CubeGestures {
 
     this.callbacks.onSnapStart(170);
 
-    // The release velocity is carried into the spring as initial velocity.
-    this.spring(drag.angle, target, velocity, TURN_SPRING, (value) => this.renderer.setLayerRotation(drag.base, value), () => {
+    // Idempotent on purpose. Two things can reach it -- the spring finishing on its own
+    // and a new touch landing it early -- and a turn committed twice is a move the user
+    // never made.
+    let landed = false;
+    const land = (): void => {
+      if (landed) return;
+      landed = true;
+      this.landTurn = null;
       // Never more than one quarter, whatever the flick did.
       const quarters = Math.max(-1, Math.min(1, Math.round(target / quarter)));
       const amount = ((quarters % 4) + 4) % 4;
@@ -607,7 +663,24 @@ export class CubeGestures {
         return;
       }
       this.callbacks.onCommit({ base: drag.base, amount: amount as 1 | 2 | 3 });
-    });
+    };
+    this.landTurn = land;
+
+    // The release velocity is carried into the spring as initial velocity.
+    this.spring(drag.angle, target, velocity, TURN_SPRING, (value) => this.renderer.setLayerRotation(drag.base, value), land);
+  }
+
+  /**
+   * Finish a turn that is still springing, right now, and commit it.
+   *
+   * The turn is already decided by the time the spring starts -- the spring is how it
+   * looks, not what it does -- so landing it early loses nothing but the animation.
+   */
+  private landSettlingTurn(): void {
+    const land = this.landTurn;
+    if (!land) return;
+    this.stopAnimation();
+    land();
   }
 
   /**
