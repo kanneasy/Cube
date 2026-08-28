@@ -35,8 +35,15 @@ const TANGENT_FLOOR = 0.62;
 const LIVE_CLAMP = 90 * DEG;
 /** Travel before the rotation axis is resolved and then locked for the gesture. */
 const AXIS_LOCK_PX = 8;
-/** Release angular speed at or above which a flick fires in the direction of travel. */
-const FLICK_RAD_PER_S = 900 * DEG;
+/**
+ * Release angular speed at or above which a flick fires in the direction of travel.
+ *
+ * This was 900deg/s, which is a quarter turn in 100ms -- reachable only by swiping hard.
+ * That number was defence against a one-frame release velocity, not a judgement about
+ * flicks: a jitter pixel on the last pointermove had to stay under it. The velocity is
+ * windowed now, so the threshold can describe an actual flick again.
+ */
+const FLICK_RAD_PER_S = 400 * DEG;
 
 const ORBIT_DECAY_MS = 400;
 /** Below the rotation this rate of drag produces, momentum simply stops. */
@@ -82,9 +89,8 @@ interface TurnDrag {
   startX: number;
   startY: number;
   angle: number;
-  lastAngle: number;
-  lastTime: number;
-  velocity: number;
+  /** Recent angle samples, for a windowed release velocity. The orbit already had this. */
+  history: { t: number; angle: number }[];
   detent: number;
 }
 
@@ -187,6 +193,25 @@ export function resolveAxis(
   }
 
   return best ? { base: best.base, tangent: best.tangent, tangentLength: best.tangentLength } : null;
+}
+
+/**
+ * Angular speed over the last `VELOCITY_WINDOW_MS`, never a single frame.
+ *
+ * The turn read a one-frame delta while the orbit read a window, and the window's own
+ * comment says why that is wrong: on iOS the last pointermove before a lift routinely
+ * carries a 2ms dt and a jitter pixel. As a one-frame velocity that reads as a flick
+ * nobody asked for -- and, worse in practice, any pause before lifting reads as a dead
+ * stop, which killed the flick branch and forced the full 45 degrees. The guard existed;
+ * it was simply never applied to the gesture that matters most.
+ */
+export function releaseVelocity(history: readonly { t: number; angle: number }[]): number {
+  if (history.length < 2) return 0;
+  const first = history[0];
+  const last = history[history.length - 1];
+  const dt = (last.t - first.t) / 1000;
+  if (dt <= 0) return 0;
+  return (last.angle - first.angle) / dt;
 }
 
 export class CubeGestures {
@@ -429,9 +454,7 @@ export class CubeGestures {
         startX: drag.startX,
         startY: drag.startY,
         angle: 0,
-        lastAngle: 0,
-        lastTime: this.scheduler.now(),
-        velocity: 0,
+        history: [{ t: this.scheduler.now(), angle: 0 }],
         detent: 0,
       };
       this.callbacks.onGrab(resolved.base);
@@ -453,11 +476,9 @@ export class CubeGestures {
     const angle = Math.max(-LIVE_CLAMP, Math.min(LIVE_CLAMP, raw));
 
     const t = this.scheduler.now();
-    const dt = Math.max(1, t - drag.lastTime) / 1000;
-    drag.velocity = (angle - drag.lastAngle) / dt;
-    drag.lastAngle = angle;
-    drag.lastTime = t;
     drag.angle = angle;
+    drag.history.push({ t, angle });
+    while (drag.history.length > 2 && t - drag.history[0].t > VELOCITY_WINDOW_MS) drag.history.shift();
 
     // The detent: crossing a 45-degree boundary is the moment the nearest quarter turn
     // changes. It is the difference between dragging a shape and turning a mechanism.
@@ -519,6 +540,7 @@ export class CubeGestures {
 
   private settleTurn(drag: TurnDrag): void {
     const quarter = 90 * DEG;
+    const velocity = releaseVelocity(drag.history);
     // A flick fires to the next quarter turn in the direction of travel even if the
     // layer has moved less than 45 degrees. That is what makes a flick feel like a
     // flick rather than like a command.
@@ -526,15 +548,15 @@ export class CubeGestures {
     // both branches are then held to a single quarter, so a hard swipe and a slow drag
     // commit the same amount and only the feel differs.
     const raw =
-      Math.abs(drag.velocity) >= FLICK_RAD_PER_S
-        ? (drag.velocity > 0 ? Math.floor(drag.angle / quarter) + 1 : Math.ceil(drag.angle / quarter) - 1)
+      Math.abs(velocity) >= FLICK_RAD_PER_S
+        ? (velocity > 0 ? Math.floor(drag.angle / quarter) + 1 : Math.ceil(drag.angle / quarter) - 1)
         : Math.round(drag.angle / quarter);
     const target = Math.max(-1, Math.min(1, raw)) * quarter;
 
     this.callbacks.onSnapStart(170);
 
     // The release velocity is carried into the spring as initial velocity.
-    this.spring(drag.angle, target, drag.velocity, TURN_SPRING, (value) => this.renderer.setLayerRotation(drag.base, value), () => {
+    this.spring(drag.angle, target, velocity, TURN_SPRING, (value) => this.renderer.setLayerRotation(drag.base, value), () => {
       // Never more than one quarter, whatever the flick did.
       const quarters = Math.max(-1, Math.min(1, Math.round(target / quarter)));
       const amount = ((quarters % 4) + 4) % 4;

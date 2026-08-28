@@ -284,3 +284,45 @@ describe('a drag never commits more than one quarter turn', () => {
     expect(h.commits).toHaveLength(0);
   });
 });
+
+// A vertical drag of V px on this mock turns the R layer by ~1.36 * V degrees, so 20px
+// is ~27deg -- deliberately short of every commit threshold, leaving the flick branch as
+// the only thing that can commit these. That is what makes them about velocity and
+// nothing else.
+describe('the release velocity is read over a window, not one frame', () => {
+  it('still flicks when the thumb pauses for a frame before lifting', () => {
+    const { clock, canvas, h } = setup();
+    pointer(canvas, 'pointerdown', 200, 250);
+    clock.advance(4);
+    pointer(canvas, 'pointermove', 200, 234);
+    clock.advance(4);
+    pointer(canvas, 'pointermove', 200, 230);
+    // The pause. A one-frame velocity reads this as a dead stop and kills the flick,
+    // which is the "it only rotates a little and returns" report.
+    clock.advance(20);
+    pointer(canvas, 'pointermove', 200, 230);
+    pointer(canvas, 'pointerup', 200, 230);
+
+    expect(clock.flush()).toBe(true);
+    expect(h.commits).toHaveLength(1);
+  });
+
+  it('does not fire a phantom flick on a jitter pixel at the end of a slow drag', () => {
+    const { clock, canvas, h } = setup();
+    pointer(canvas, 'pointerdown', 200, 250);
+    for (let i = 1; i <= 10; i++) {
+      clock.advance(16);
+      pointer(canvas, 'pointermove', 200, 250 - i * 2);
+    }
+    // iOS routinely delivers this: one pixel, 2ms after the last real move. As a
+    // one-frame velocity it is ~680 deg/s, which clears the lowered flick threshold on
+    // its own -- the window is what makes lowering that threshold safe.
+    clock.advance(2);
+    pointer(canvas, 'pointermove', 200, 229);
+    pointer(canvas, 'pointerup', 200, 229);
+
+    expect(clock.flush()).toBe(true);
+    expect(h.commits).toHaveLength(0);
+    expect(h.releases).toBeGreaterThan(0);
+  });
+});
