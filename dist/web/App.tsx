@@ -108,6 +108,22 @@ export function App() {
     // teaches how to undo something the user has not done yet; here the lesson arrives
     // at the moment it means something. `visual.md` has specified this trigger since the
     // original spec and it was never built.
+    /**
+     * The card retires on a gesture the user actually performed, not on contact.
+     *
+     * It briefly retired on `onTouchCubie` -- any finger touching the cube at all -- so
+     * a curious tap that never became a drag permanently destroyed the only surface
+     * teaching the controls, in the same motion that was supposed to teach them. The
+     * spec's "dismisses on the first touch" has always meant the first real DRAG: "the
+     * lesson and the action are the same motion". A tap is not that motion.
+     *
+     * Turning a layer and moving the view both count, because the card teaches both.
+     */
+    const retireFirstRun = (): void => {
+      setFirstRunSeen(true);
+      writeFlag(FIRST_RUN_KEY);
+    };
+
     let resetHinted = false;
     const maybeHintReset = (): void => {
       if (resetHinted) return;
@@ -128,12 +144,16 @@ export function App() {
       onTouchCubie: (cubieIndex) => {
         renderer.setTouched(cubieIndex);
         audio.unlock();
-        setFirstRunSeen(true);
-        writeFlag(FIRST_RUN_KEY);
       },
-      onGrab: (base) => renderer.setGrabbed(base),
+      onGrab: (base) => {
+        renderer.setGrabbed(base);
+        retireFirstRun();
+      },
       onAxisSwitch: (base) => renderer.setGrabbed(base),
-      onViewMoved: () => maybeHintReset(),
+      onViewMoved: () => {
+        retireFirstRun();
+        maybeHintReset();
+      },
       onRelease: () => renderer.clearGrab(),
       onDetent: () => audio.tick(),
       onSnapStart: (settleMs) => {
