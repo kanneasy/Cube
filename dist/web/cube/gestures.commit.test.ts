@@ -140,6 +140,18 @@ function drag(
   pointer(canvas, 'pointerup', x0 + dx, y0 + dy);
 }
 
+/** Drag `dist` px along a unit screen direction, so a test can aim between two tangents. */
+function dragAlong(
+  canvas: HTMLCanvasElement,
+  clock: ReturnType<typeof fakeScheduler>,
+  ux: number,
+  uy: number,
+  dist: number,
+  steps = 10,
+) {
+  drag(canvas, clock, ux * dist, uy * dist, { steps });
+}
+
 describe('a drag turns a layer and commits it', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -324,5 +336,43 @@ describe('the release velocity is read over a window, not one frame', () => {
     expect(clock.flush()).toBe(true);
     expect(h.commits).toHaveLength(0);
     expect(h.releases).toBeGreaterThan(0);
+  });
+});
+
+// On this mock the two candidate tangents are (0.749, -0.663) and (1, 0) in screen
+// space, so they tie exactly 20.7 degrees below horizontal. A drag along that line
+// scores both axes the same, and locking there is a coin flip between two different
+// layers -- the "it rotated a face I didn't intend" report.
+const TIE = { x: 0.9353, y: 0.3542 };
+
+describe('the axis lock waits for the drag to mean something', () => {
+  it('does not lock on a drag aimed exactly between the two candidates', () => {
+    const { clock, canvas, h, layerCalls } = setup();
+    dragAlong(canvas, clock, TIE.x, TIE.y, 20); // past AXIS_LOCK_PX, short of AXIS_DECIDE_PX
+    clock.flush();
+    expect(h.grabs).toHaveLength(0);
+    expect(layerCalls).toHaveLength(0);
+    expect(h.commits).toHaveLength(0);
+  });
+
+  it('takes the best candidate anyway once the drag has gone far enough', () => {
+    const { clock, canvas, h } = setup();
+    dragAlong(canvas, clock, TIE.x, TIE.y, 35); // past AXIS_DECIDE_PX
+    clock.flush();
+    expect(h.grabs).toHaveLength(1);
+  });
+
+  it('locks straight away on a drag that plainly means one of them', () => {
+    const { clock, canvas, h } = setup();
+    drag(canvas, clock, 0, -14, { steps: 1 });
+    expect(h.grabs).toEqual(['R']);
+  });
+
+  it('still ignores a drag that never travels far enough to resolve anything', () => {
+    const { clock, canvas, h, layerCalls } = setup();
+    drag(canvas, clock, 6, 4, { steps: 2 }); // 7.2px, under AXIS_LOCK_PX
+    clock.flush();
+    expect(h.grabs).toHaveLength(0);
+    expect(layerCalls).toHaveLength(0);
   });
 });

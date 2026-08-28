@@ -33,8 +33,29 @@ const TANGENT_FLOOR = 0.62;
  * expects -- you turn a face, you do not spin it.
  */
 const LIVE_CLAMP = 90 * DEG;
-/** Travel before the rotation axis is resolved and then locked for the gesture. */
-const AXIS_LOCK_PX = 8;
+/**
+ * Travel before the rotation axis is resolved and then locked for the gesture.
+ *
+ * Was 8px, which is inside the distance a thumb's contact patch rolls before the stroke
+ * has any direction at all -- so the axis was decided from the noisiest part of the
+ * gesture and then held for the rest of it.
+ */
+const AXIS_LOCK_PX = 13;
+/**
+ * How far the winning axis must beat the runner-up before the lock is taken.
+ *
+ * A sticker offers exactly two candidate axes, and their screen tangents sit roughly 60
+ * degrees apart rather than square, so a drag aimed between them scores both almost
+ * equally and taking the larger is a coin flip. That coin flip is the "it rotated a face
+ * I didn't intend" report. 1.25 means "within about 19 degrees of one tangent"; anything
+ * vaguer keeps sampling rather than guessing.
+ */
+const AXIS_MARGIN = 1.25;
+/**
+ * Past this, take the best candidate anyway. A drag that never sharpens still has to turn
+ * something -- stalling forever is a worse answer than a considered guess.
+ */
+const AXIS_DECIDE_PX = 30;
 /**
  * Release angular speed at or above which a flick fires in the direction of travel.
  *
@@ -100,6 +121,13 @@ interface PendingDrag {
   normal: Vec3;
   startX: number;
   startY: number;
+  /**
+   * When the finger landed. The turn's velocity window is seeded from here, because the
+   * angle at the moment the axis locks is NOT zero -- the finger has already travelled
+   * AXIS_LOCK_PX. Seeding the window with a zero at lock time claims all of that angle
+   * accrued in the instant of locking, which reads as a flick on a slow, careful drag.
+   */
+  startTime: number;
 }
 
 interface OrbitDrag {
@@ -166,12 +194,14 @@ export function resolveAxis(
   normal: Vec3,
   dragX: number,
   dragY: number,
-): { base: TurnBase; tangent: { x: number; y: number }; tangentLength: number } | null {
+): { base: TurnBase; tangent: { x: number; y: number }; tangentLength: number; confidence: number } | null {
   const coords = renderer.cubieCoords(cubieIndex);
   // Pointer y grows downward; flip it so both sides of the dot product are y-up.
   const drag = { x: dragX, y: -dragY };
 
   let best: { base: TurnBase; tangent: { x: number; y: number }; tangentLength: number; score: number } | null = null;
+  /** The best score this drag did NOT pick. How close the two candidates ran. */
+  let runnerUp = 0;
 
   for (let axis = 0; axis < 3; axis++) {
     if (normal[axis] !== 0) continue; // a rotation about the sticker's own normal spins it in place
@@ -188,11 +218,18 @@ export function resolveAxis(
     const tangent = { x: screen.x * flip, y: screen.y * flip };
     const score = tangent.x * drag.x + tangent.y * drag.y;
     if (!best || Math.abs(score) > Math.abs(best.score)) {
+      if (best) runnerUp = Math.abs(best.score);
       best = { base, tangent, tangentLength: screen.length, score };
+    } else if (Math.abs(score) > runnerUp) {
+      runnerUp = Math.abs(score);
     }
   }
+  if (!best) return null;
 
-  return best ? { base: best.base, tangent: best.tangent, tangentLength: best.tangentLength } : null;
+  // Infinite when the runner-up scores nothing at all -- a drag straight along one
+  // tangent, which is as decisive as this gets.
+  const confidence = runnerUp > 1e-6 ? Math.abs(best.score) / runnerUp : Number.POSITIVE_INFINITY;
+  return { base: best.base, tangent: best.tangent, tangentLength: best.tangentLength, confidence };
 }
 
 /**
@@ -385,6 +422,7 @@ export class CubeGestures {
         normal: hit.worldNormal,
         startX: event.clientX,
         startY: event.clientY,
+        startTime: this.pressedAt,
       };
       return;
     }
@@ -443,9 +481,12 @@ export class CubeGestures {
     const dy = event.clientY - drag.startY;
 
     if (drag.kind === 'pending') {
-      if (Math.hypot(dx, dy) < AXIS_LOCK_PX) return;
+      const travel = Math.hypot(dx, dy);
+      if (travel < AXIS_LOCK_PX) return;
       const resolved = resolveAxis(this.renderer, drag.cubieIndex, drag.normal, dx, dy);
       if (!resolved) return;
+      // Nothing has moved yet, so waiting costs nothing and guessing costs a wrong turn.
+      if (resolved.confidence < AXIS_MARGIN && travel < AXIS_DECIDE_PX) return;
       this.drag = {
         kind: 'turn',
         base: resolved.base,
@@ -454,7 +495,7 @@ export class CubeGestures {
         startX: drag.startX,
         startY: drag.startY,
         angle: 0,
-        history: [{ t: this.scheduler.now(), angle: 0 }],
+        history: [{ t: drag.startTime, angle: 0 }],
         detent: 0,
       };
       this.callbacks.onGrab(resolved.base);
@@ -703,6 +744,8 @@ export const DEFAULTS = {
   TANGENT_FLOOR,
   FLICK_RAD_PER_S,
   AXIS_LOCK_PX,
+  AXIS_MARGIN,
+  AXIS_DECIDE_PX,
   PINCH_THRESHOLD_PX,
   ORBIT_DECAY_MS,
   ORBIT_CUTOFF_PXPS,
