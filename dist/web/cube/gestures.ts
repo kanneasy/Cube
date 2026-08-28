@@ -282,6 +282,15 @@ export class CubeGestures {
   private lastTapEndedAt = Number.NEGATIVE_INFINITY;
   private pressedAt = 0;
   private pressedAtXY = { x: 0, y: 0 };
+  /**
+   * False for the whole of any sequence that ever had two fingers down.
+   *
+   * The tap test runs against `pressedAt`, which the SECOND finger overwrites. Pinch by
+   * anchoring one finger and moving the other -- the ordinary way -- and lifting the
+   * anchor read as a tap; two pinches in a row read as a double tap and reset the view.
+   * A gesture that spent any time as a pinch is not a tap, whatever its last finger did.
+   */
+  private tapCandidate = false;
   /** Live contacts, so a second finger can promote a drag into a pinch. */
   private readonly pointers = new Map<number, { x: number; y: number }>();
 
@@ -394,6 +403,9 @@ export class CubeGestures {
 
     this.pressedAt = this.scheduler.now();
     this.pressedAtXY = { x: event.clientX, y: event.clientY };
+    // Only a lone first finger can still become a tap; a second one disqualifies the
+    // whole sequence until every finger is up again.
+    this.tapCandidate = this.pointers.size === 1;
 
     // Touching the cube kills any momentum on the same frame. Without that release
     // valve a 400ms decay is a nuisance mid-solve; with it, the cube stops dead under
@@ -589,7 +601,7 @@ export class CubeGestures {
     // have committed a turn. Two of them reset the view.
     const now = this.scheduler.now();
     const travel = Math.hypot(event.clientX - this.pressedAtXY.x, event.clientY - this.pressedAtXY.y);
-    if (now - this.pressedAt <= TAP_MAX_MS && travel <= TAP_MAX_PX) {
+    if (this.tapCandidate && now - this.pressedAt <= TAP_MAX_MS && travel <= TAP_MAX_PX) {
       if (now - this.lastTapEndedAt <= DOUBLE_TAP_MS) {
         this.lastTapEndedAt = Number.NEGATIVE_INFINITY;
         this.drag = null;
@@ -602,10 +614,17 @@ export class CubeGestures {
     // Lifting one finger of a pinch ends the pinch rather than resuming an orbit
     // mid-gesture, which would jump the cube.
     if (drag?.kind === 'pinch') {
-      if (this.pointers.size < 2) {
+      if (this.pointers.size >= 2) return;
+      this.settleZoom();
+      if (this.pointers.size === 0) {
         this.drag = null;
-        this.settleZoom();
+        return;
       }
+      // Hand the surviving finger a fresh orbit rather than leaving it dead until it
+      // lifts too. Pinching to frame the cube and then carrying on with one finger is
+      // the natural motion, and it used to do nothing at all.
+      const [p] = [...this.pointers.values()];
+      this.drag = { kind: 'orbit', lastX: p.x, lastY: p.y, history: [{ t: now, x: p.x, y: p.y }] };
       return;
     }
 

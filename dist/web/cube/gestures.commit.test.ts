@@ -44,6 +44,8 @@ function mockRenderer(coords: Vec3, opts: { hits?: boolean } = {}) {
   const orbits: { dx: number; dy: number }[] = [];
   const spins: number[] = [];
   const zooms: number[] = [];
+  /** Written only by the view reset, so a test can prove a pinch did not trigger one. */
+  const resets: number[] = [];
   const canvas = document.createElement('canvas');
   Object.defineProperty(canvas, 'clientWidth', { value: 375 });
   canvas.setPointerCapture = () => {};
@@ -87,14 +89,21 @@ function mockRenderer(coords: Vec3, opts: { hits?: boolean } = {}) {
     getZoom: () => 1,
     setZoom: (f: number) => zooms.push(f),
     orientationQuaternion: () => new Quaternion(),
-    setOrientation: () => {},
+    setOrientation: () => resets.push(1),
   };
-  return { renderer: renderer as unknown as CubeRenderer, canvas, layerCalls, orbits, spins, zooms };
+  return { renderer: renderer as unknown as CubeRenderer, canvas, layerCalls, orbits, spins, zooms, resets };
 }
 
-const pointer = (canvas: HTMLCanvasElement, type: string, x: number, y: number) =>
+const pointer = (canvas: HTMLCanvasElement, type: string, x: number, y: number, pointerId = 1) =>
   canvas.dispatchEvent(
-    new PointerEvent(type, { pointerId: 1, isPrimary: true, bubbles: true, cancelable: true, clientX: x, clientY: y }),
+    new PointerEvent(type, {
+      pointerId,
+      isPrimary: pointerId === 1,
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+    }),
   );
 
 interface Harness {
@@ -106,7 +115,7 @@ interface Harness {
 
 function setup(coords: Vec3 = [1, -1, 1], opts: { hits?: boolean } = {}) {
   const clock = fakeScheduler();
-  const { renderer, canvas, layerCalls, orbits, spins, zooms } = mockRenderer(coords, opts);
+  const { renderer, canvas, layerCalls, orbits, spins, zooms, resets } = mockRenderer(coords, opts);
   const h: Harness = { commits: [], grabs: [], detents: 0, releases: 0 };
   const gestures = new CubeGestures(
     renderer,
@@ -119,7 +128,7 @@ function setup(coords: Vec3 = [1, -1, 1], opts: { hits?: boolean } = {}) {
     },
     clock.scheduler,
   );
-  return { clock, canvas, gestures, h, layerCalls, orbits, spins, zooms };
+  return { clock, canvas, gestures, h, layerCalls, orbits, spins, zooms, resets };
 }
 
 /** Drag from (x,y) by (dx,dy) over `steps` moves, `msPerStep` apart. */
@@ -390,5 +399,91 @@ describe('the axis lock waits for the drag to mean something', () => {
     clock.flush();
     expect(h.grabs).toHaveLength(0);
     expect(layerCalls).toHaveLength(0);
+  });
+});
+
+// Two fingers have never had a single test. The mock has recorded `orbits`, `spins` and
+// `zooms` since it was written and nothing ever read them, and no test dispatched a
+// second pointerId -- so the whole pinch path shipped unverified.
+describe('two fingers', () => {
+  /** Put two fingers down at a known span, centred on the stage. */
+  const twoDown = (canvas: HTMLCanvasElement, span = 40) => {
+    pointer(canvas, 'pointerdown', 220 - span / 2, 250, 1);
+    pointer(canvas, 'pointerdown', 220 + span / 2, 250, 2);
+  };
+
+  it('orbits from the centroid before the span has moved enough to be a zoom', () => {
+    const { canvas, orbits, zooms } = setup();
+    twoDown(canvas);
+    // Both fingers slide right together: the span never changes, so this is pure orbit.
+    pointer(canvas, 'pointermove', 210, 250, 1);
+    pointer(canvas, 'pointermove', 250, 250, 2);
+    expect(orbits.reduce((n, o) => n + o.dx, 0)).toBeCloseTo(10, 5);
+    expect(zooms).toHaveLength(0);
+  });
+
+  it('zooms in when the fingers spread and out when they close', () => {
+    const spread = setup();
+    twoDown(spread.canvas);
+    pointer(spread.canvas, 'pointermove', 300, 250, 2); // span 40 -> 100
+    expect(spread.zooms.length).toBeGreaterThan(0);
+    expect(spread.zooms[spread.zooms.length - 1]).toBeGreaterThan(1);
+
+    const close = setup();
+    twoDown(close.canvas, 120);
+    pointer(close.canvas, 'pointermove', 230, 250, 2); // span 120 -> 70
+    expect(close.zooms.length).toBeGreaterThan(0);
+    expect(close.zooms[close.zooms.length - 1]).toBeLessThan(1);
+  });
+
+  it('orbits and zooms in the same gesture', () => {
+    const { canvas, orbits, zooms } = setup();
+    twoDown(canvas);
+    // One finger travels: the centroid shifts AND the span opens.
+    pointer(canvas, 'pointermove', 320, 250, 2);
+    expect(orbits.reduce((n, o) => n + Math.abs(o.dx), 0)).toBeGreaterThan(0);
+    expect(zooms.length).toBeGreaterThan(0);
+  });
+
+  it('does not reset the view when a pinch is lifted, however quickly', () => {
+    // The tap test runs against a `pressedAt` the second finger overwrote. Anchor one
+    // finger, move the other, lift the mover, then lift the anchor -- the anchor never
+    // moved and lifted well inside the tap window, so it used to register as a tap.
+    // Twice in a row was a double tap, and the view jumped home mid-gesture.
+    const { clock, canvas, resets } = setup();
+    for (let i = 0; i < 2; i++) {
+      pointer(canvas, 'pointerdown', 200, 250, 1);
+      pointer(canvas, 'pointerdown', 240, 250, 2); // this one overwrites pressedAt/XY
+      clock.advance(10);
+      pointer(canvas, 'pointermove', 140, 250, 1); // the mover
+      pointer(canvas, 'pointerup', 140, 250, 1);
+      clock.advance(10);
+      pointer(canvas, 'pointerup', 240, 250, 2); // the anchor, lifting where it landed
+      clock.advance(40);
+    }
+    clock.flush();
+    expect(resets).toHaveLength(0);
+  });
+
+  it('hands the surviving finger a live orbit when the other lifts', () => {
+    const { canvas, orbits } = setup();
+    twoDown(canvas);
+    pointer(canvas, 'pointerup', 240, 250, 2);
+    const before = orbits.length;
+    // One finger left, still down, still dragging. This used to do nothing at all.
+    pointer(canvas, 'pointermove', 230, 250, 1);
+    expect(orbits.length).toBeGreaterThan(before);
+    expect(orbits[orbits.length - 1].dx).toBeCloseTo(30, 5);
+  });
+
+  it('still resets the view on a genuine double tap', () => {
+    const { clock, canvas, resets } = setup();
+    pointer(canvas, 'pointerdown', 200, 250);
+    pointer(canvas, 'pointerup', 200, 250);
+    clock.advance(60);
+    pointer(canvas, 'pointerdown', 200, 250);
+    pointer(canvas, 'pointerup', 200, 250);
+    clock.flush();
+    expect(resets.length).toBeGreaterThan(0);
   });
 });
