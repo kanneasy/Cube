@@ -607,60 +607,56 @@ a colorblind viewer and a glance.
 
 The app's mark is a 3×3 grid of squares whose **top row is offset by a quarter turn** —
 the atomic unit the app is named for, frozen. It is drawn as SVG in-app (menu head,
-settings, empty states); only the home-screen icon is generated.
+settings, empty states) and as the browser-tab favicon.
 
 **iOS copies the home-screen icon once, at install, and never re-reads it.** The final icon
 ships before anyone installs, or changing it later means deleting and re-adding the app.
 
-App icon — `icon-1024.png`, 1024×1024
+### The tile is drawn, not generated, and it is not the mark
 
-```
-A 3D icon of a Rubik's-style cube frozen mid-turn, filling a full bleed square
-composition with no padding or margin, on a pure black background. The cube's entire top
-layer is twisted forty-five degrees out of alignment with the two layers beneath it: at
-each of the top layer's four corners a small triangular notch cuts into the outline and
-reveals near-black plastic underneath, and the outer edge of the object is a stepped,
-notched silhouette, never a plain straight-sided box. The cube is centered with identical
-black margin on all four sides -- left, right, top and bottom the same width -- occupying
-the central eighty percent of the frame on both axes. Seen in a three-quarter view tilted
-so the top face and two side faces are visible. Most of the top face and the two visible side faces read as
-large, coherent blocks of a single color each -- a cube that is almost solved -- except at
-the twisted seam where the offset layer's stickers show a scattering of two or three other
-colors breaking the pattern, the way a real cube looks caught mid-turn rather than fully
-mixed. Every small square sticker is a flat, fully saturated block of pure color with hard
-square corners, no gloss, no reflection, no highlight, no bevel: a cool pale grey-white
-(never cream, never yellow), a warm muted gold rather than lemon yellow, a true spring
-green leaning cool rather than olive or lime, a clear mid-value blue that is a true blue
-and not violet or indigo, a bright tangerine orange, and a deep crimson red leaning
-slightly toward magenta rather than fire-engine red. The gaps between squares are near-black graphite.
-Lighting is flat and graphic: top faces brightest, side faces one step darker, no
-gradients, no shadow. Centered, symmetrical, high contrast.
-```
+App icon — `icon-cube.png`, 1024×1024, full bleed, produced by
+`dist/scripts/render-icon.mjs`.
 
-This brief was rewritten on 2026-08-26 after the first generation failed the image gate.
-Two lessons are baked into the wording above and should not be edited back out. The
-offset top layer is described by its **visible geometric result** -- corner notches, a
-stepped silhouette -- because stating the instruction abstractly produced a flush, solved
-cube with a cosmetic colour stripe standing in for the offset. And each hue is stated as a
-relationship *against the generic version it drifted to*, with the near-white called out
-explicitly, because it vanished entirely on the first attempt.
+A solved 3×3×3 cube in three-quarter view at the app's own resting pose — Ry(-45) then
+Rx(+24), so the white face is on top, green on the screen left and red on the screen
+right. Nine evenly sized square stickers to a face, each inset within near-black graphite
+plastic, with a hairline of pure black between cubies. Flat and graphic: no gloss, no
+bevel, no shadow, no gradient within a sticker.
 
-A third revision followed the second generation. The faces now read as mostly-coherent
-blocks rather than a full scramble: a fully scrambled cube dissolves into a colourless
-mosaic at 48px, and the notched silhouette this brief works so hard to get is not
-perceptible at that size anyway, so the scramble was pure noise on top of a geometry win
-it could not preserve. The blue lost its "faint violet cast" instruction, which overshot
-into an actually-violet blue.
+~~~ icon-geometry
+Every number is the app's own, restated as a literal because a standalone node script
+cannot import the TypeScript, and asserted against the source in
+`dist/web/cube/icon-master.test.ts`:
+  cubie 0.98 at spacing 1.0, sticker inset 0.06, camera FOV 28 at distance 18
+  colour: the Cardinal faces, put through the SHADE ramp; plastic through SHADE_BODY
+  the ramp multiplies in LINEAR light, exactly as applyShading does, because three.js
+    holds colour in linear working space -- multiplying the sRGB bytes instead lands a
+    few points off and desaturates
+full bleed: the cube fills the frame. The safe zone is applied by normalize-icon.mjs,
+  not here, and a master carrying its own margin would be inset twice.
+~~~
 
-**Two defects in the render are NOT the brief's to fix and must not be prompted at.**
-The provider returns real alpha even when opaque is requested, and it does not reliably
-centre to an even margin. Both are corrected deterministically after generation by
-`bin/flatten-icon.mjs`, because two attempts differing on transparency with identical
-transparency requests is provider non-determinism, not something prose controls.
+**Why this stopped being a generated asset.** Three generations of `gpt-image-2` failed,
+each differently, and the third shipped: a top layer of four unevenly sized cubies
+floating over a 3×3 cube. Every failure was the same instruction — the top layer twisted
+45 degrees out of alignment, described by its visible geometric result after the first
+attempt produced a flush cube with a painted-on stripe. The brief was rewritten three
+times and never moved it, because the brief was never the problem: that geometry is the
+part a model cannot build.
+
+So the tile is no longer the mark. The offset stays where it works — the in-app `Mark`
+and the favicon, both drawn in code, both exact at any size. The tile is a portrait of
+the cube the app actually renders, which is a thing that can be drawn exactly, and being
+recognisably a Rubik's cube at 48px is worth more on a home screen than being a clever
+logo nobody can resolve.
 
 Derive `icon-192.png`, `icon-512.png`, `icon-512-maskable.png` and
-`apple-touch-icon-180.png` from the 1024 master; the 80% safe zone in the brief is what
-makes the maskable crop survive. The iOS launch image is the same SVG mark centered on
+`apple-touch-icon-180.png` from the master with `dist/scripts/normalize-icon.mjs`, which
+also writes them to the served directory. The plain variants take the 80% safe zone; the
+**maskable takes 0.56**, because Android's maskable safe zone is a circle of 80%
+*diameter* and an 80% *bounding box* puts a square subject's corners exactly on the crop.
+The two 512s used to be byte-identical, which was the tell: the maskable variant had no
+protection the plain one lacked. The iOS launch image is the same SVG mark centered on
 `#000000` — generated in code, not by a model.
 
 ## The five-second test

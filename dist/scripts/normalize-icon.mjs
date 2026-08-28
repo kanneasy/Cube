@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Normalise a generated icon into the derivation master, then derive the set.
 //
-//   node dist/scripts/normalize-icon.mjs dist/web/public/<generated>.png
+//   node dist/scripts/normalize-icon.mjs <master>.png [out-dir]
 //
 // Two defects in the generated render are compositing-level rather than creative, and
 // two attempts with identical `transparent: false` requests differed on the first of
@@ -25,11 +25,26 @@ if (!source || !existsSync(source)) {
   process.exit(1);
 }
 
-const outDir = join(dirname(source), 'icons');
+// The served path, not `dirname(source)/icons`. That default put the output beside
+// whatever master was passed, so neither documented invocation of this script landed on
+// the directory the app actually ships, and the copy across was a manual step nobody
+// recorded. Pass an explicit second argument to override.
+const outDir = process.argv[3] || join('dist', 'web', 'public', 'icons');
 mkdirSync(outDir, { recursive: true });
 
 // The safe zone the brief specifies, and what the maskable crop depends on.
 const CONTENT_FRACTION = 0.8;
+/**
+ * The maskable variant gets its own, tighter fraction.
+ *
+ * Android's maskable safe zone is a CIRCLE of 80% diameter, and 0.8 here is an 80%
+ * BOUNDING BOX -- so a square-ish subject's corners sit exactly on the crop boundary.
+ * The two files used to be byte-identical, which is the tell: the maskable variant was
+ * getting no protection the plain one did not already have. A corner of the bounding box
+ * is at radius 0.8 * sqrt(2)/2 = 0.566 of the frame, against the circle's 0.4, so the
+ * box has to come in to 0.4 * 2/sqrt(2) = 0.566 for the corners to clear it. 0.56.
+ */
+const MASKABLE_FRACTION = 0.56;
 const MASTER = 1024;
 
 const python = `
@@ -68,20 +83,20 @@ print(f"{out.split('/')[-1]}  {size}x{size}  margins L/R {lm}/{size - content.wi
 `;
 
 const master = join(outDir, 'icon-1024.png');
-const run = (out, size) =>
-  console.log('  ' + execFileSync('python3', ['-c', python, source, out, String(size), String(CONTENT_FRACTION)]).toString().trim());
+const run = (out, size, frac = CONTENT_FRACTION) =>
+  console.log('  ' + execFileSync('python3', ['-c', python, source, out, String(size), String(frac)]).toString().trim());
 
 console.log('normalize-icon: flattening onto opaque black and recentring');
 run(master, MASTER);
 
 // Every variant is derived from the SAME normalised geometry rather than from each
 // other, so a rounding error cannot compound down the chain.
-for (const [name, size] of [
-  ['icon-512.png', 512],
-  ['icon-512-maskable.png', 512],
-  ['icon-192.png', 192],
-  ['apple-touch-icon-180.png', 180],
+for (const [name, size, frac] of [
+  ['icon-512.png', 512, CONTENT_FRACTION],
+  ['icon-512-maskable.png', 512, MASKABLE_FRACTION],
+  ['icon-192.png', 192, CONTENT_FRACTION],
+  ['apple-touch-icon-180.png', 180, CONTENT_FRACTION],
 ]) {
-  run(join(outDir, name), size);
+  run(join(outDir, name), size, frac);
 }
 console.log(`wrote ${outDir}/`);

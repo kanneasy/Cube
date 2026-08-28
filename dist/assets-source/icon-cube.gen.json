@@ -1,0 +1,26 @@
+{
+  "id": "icon-4f53733c",
+  "type": "icon",
+  "provider": "adopted",
+  "model": "unknown",
+  "brief": "A 3x3x3 Rubik's cube, solved, drawn deterministically rather than generated. Orthographic-leaning three-quarter view at the app's own resting pose -- Ry(-45) then Rx(+24) -- showing the U face on top, F on the screen left and R on the screen right. Nine evenly sized square stickers on each visible face, each inset 6 percent of its cubie within near-black graphite plastic, with a hairline of pure black between cubies. Colours are the app's Cardinal palette put through the app's own value ramp in linear light, so the tile is a portrait of the cube the app renders: Chalk on top, Verde on the left, Signal on the right. Pure opaque black field, full bleed, the cube filling the frame.",
+  "briefSha": "4f53733c",
+  "requested": {
+    "size": "1024x1024",
+    "transparent": false
+  },
+  "delivered": {
+    "width": 1024,
+    "height": 1024,
+    "alphaChannel": false,
+    "bytes": 187863
+  },
+  "sizeHonored": true,
+  "transparencyRequested": false,
+  "alphaChannelPresent": false,
+  "ignoredParams": [],
+  "source": "adopted",
+  "note": "Provenance recorded after the fact. The brief is the one on record, not necessarily the one that produced these pixels.",
+  "estCostUsd": 0,
+  "createdAt": "2026-08-28T20:19:15.113Z"
+}
