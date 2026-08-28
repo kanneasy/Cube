@@ -54,13 +54,31 @@ export const BROWSER_TAB_NOTICE = {
   dismiss: 'NOT NOW',
 } as const;
 
-/** Two lines, dismissed by the first drag — so the lesson and the action are one motion. */
+/** Three lines, dismissed by the first drag — so the lesson and the action are one motion. */
 export const FIRST_RUN = [
   'Drag a sticker to turn that layer.',
   'Drag the background to look around.',
-  // With no pitch clamp and nothing settling to a canonical pose, this is the only way
-  // back to a known view -- so the one surface built to teach the gestures has to say it.
-  'Pinch to zoom. Double tap to reset the view.',
+  // "look around" repeats line 2's words rather than reaching for a synonym, because it
+  // is the same action reached a second way, and saying so is the teaching. "even on the
+  // cube" is the fact the user's own report proved was missing: zoomed in there is no
+  // background left to grab, which is exactly where turning it matters most.
+  'Two fingers zoom and look around, even on the cube.',
 ] as const;
+
+/**
+ * The view reset, taught at the one moment it means anything.
+ *
+ * It used to share the overlay's third line, which teaches how to undo something the
+ * user has not done yet -- a fact with no purchase at the moment it is given. This fires
+ * instead the first time the view has actually drifted, once per session, in the
+ * notation strip's reserved slot. Silent: nothing was refused, so it takes the slot's
+ * timing and treatment but not its thunk.
+ *
+ * "RESET" rather than "RESET VIEW" or "RESET HOME": this app already uses Home to mean
+ * the iOS Home Screen, and colliding those two meanings in a one-second toast is what
+ * the terminology table exists to prevent. Nothing else on screen while the clock is
+ * idle is plausibly the thing being reset.
+ */
+export const VIEW_RESET_HINT = 'DOUBLE TAP TO RESET';
 
 export const HOLD_LABEL = 'HOLD BOTH TO START';

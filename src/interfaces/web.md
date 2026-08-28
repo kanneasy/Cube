@@ -103,13 +103,37 @@ as on-screen text would be narrating a sound that's doing its job.
 
 **Refusals.** Full set and trigger mapping in `voice.md`.
 
-**First-run overlay.** Two lines, dismisses on the first touch — which is also the
+**First-run overlay.** Three lines, dismisses on the first touch — which is also the
 user's first real drag, so the lesson and the action are the same motion:
 
 ~~~ first-run
 Drag a sticker to turn that layer.
 Drag the background to look around.
+Two fingers zoom and look around, even on the cube.
 ~~~
+
+Line three repeats line two's "look around" rather than reaching for a synonym: it is the
+same action reached a second way, and saying so is the teaching. "even on the cube" is the
+fact a user's own report proved was missing — zoomed in there is no background left to
+grab, which is exactly where turning it matters most. Two fingers also roll the cube, and
+that is deliberately not taught here: it is a safe, reversible refinement of a gesture the
+line already teaches, discovered by twisting a little further, not a fourth law to hand
+someone before they have touched anything.
+
+The view reset is **not** on this card. A card that dismisses at first touch would be
+teaching how to undo something the user has not yet done, which is a fact with no
+purchase at the moment it is given.
+
+~~~ view-reset-hint
+DOUBLE TAP TO RESET
+~~~
+
+It fires instead in the notation strip's reserved slot — the refusal's slot, timing and
+treatment exactly, but silent and not marked as a refusal, because nothing was blocked.
+Once per session, the first time the view has actually drifted past 90° or 10% of zoom
+while the clock is idle. "RESET" rather than "RESET VIEW" or "RESET HOME": this app
+already uses Home to mean the iOS Home Screen, and nothing else on screen while the clock
+is idle is plausibly the thing being reset.
 
 ## Mode sheet
 

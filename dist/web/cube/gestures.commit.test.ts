@@ -114,6 +114,8 @@ interface Harness {
   grabs: string[];
   /** Every time the provisional axis changed hands mid-gesture. */
   switches: string[];
+  /** Orbit or pinch moved the view, which is never a move. */
+  viewMoves: number;
   detents: number;
   releases: number;
 }
@@ -121,13 +123,14 @@ interface Harness {
 function setup(coords: Vec3 = [1, -1, 1], opts: { hits?: boolean } = {}) {
   const clock = fakeScheduler();
   const { renderer, canvas, layerCalls, orbits, spins, zooms, resets } = mockRenderer(coords, opts);
-  const h: Harness = { commits: [], touches: [], grabs: [], switches: [], detents: 0, releases: 0 };
+  const h: Harness = { commits: [], touches: [], grabs: [], switches: [], viewMoves: 0, detents: 0, releases: 0 };
   const gestures = new CubeGestures(
     renderer,
     {
       onTouchCubie: (i) => h.touches.push(i),
       onGrab: (base) => h.grabs.push(base),
       onAxisSwitch: (base) => h.switches.push(base),
+      onViewMoved: () => h.viewMoves++,
       onRelease: () => h.releases++,
       onCommit: (move) => h.commits.push(move),
       onDetent: () => h.detents++,
@@ -664,5 +667,83 @@ describe('the grab acknowledgement fires in two stages', () => {
     expect(h.touches).toHaveLength(1);
     pointer(canvas, 'pointerdown', 300, 250, 2);
     expect(h.releases).toBeGreaterThan(0);
+  });
+});
+
+describe('moving the view is reported, and is never a move', () => {
+  it('reports a one-finger orbit on the background', () => {
+    const { clock, canvas, h } = setup([1, -1, 1], { hits: false });
+    drag(canvas, clock, 40, 0);
+    expect(h.viewMoves).toBeGreaterThan(0);
+    expect(h.commits).toHaveLength(0);
+  });
+
+  it('reports a two-finger gesture', () => {
+    const { canvas, h } = setup();
+    pointer(canvas, 'pointerdown', 200, 250, 1);
+    pointer(canvas, 'pointerdown', 240, 250, 2);
+    pointer(canvas, 'pointermove', 300, 250, 2);
+    expect(h.viewMoves).toBeGreaterThan(0);
+  });
+
+  it('does not report turning a layer as a view move', () => {
+    const { clock, canvas, h } = setup();
+    drag(canvas, clock, 0, -60);
+    clock.flush();
+    expect(h.commits).toHaveLength(1);
+    expect(h.viewMoves).toBe(0);
+  });
+});
+
+// A third contact during a pinch is entirely plausible -- a palm edge, an adjacent
+// finger, a two-handed grab on a phone. It used to move the cube twice over: the
+// centroid averaged ALL pointers against a two-finger baseline, and if one of the
+// original pair then lifted, span and twist silently began reading a different pair
+// against the old baseline. Both jumped the cube in a single frame.
+describe('a stray third finger during a pinch', () => {
+  const twoDown = (canvas: HTMLCanvasElement) => {
+    pointer(canvas, 'pointerdown', 160, 250, 1);
+    pointer(canvas, 'pointerdown', 280, 250, 2);
+  };
+
+  it('does not orbit, zoom or roll the cube on its own', () => {
+    const { canvas, orbits, zooms, spins } = setup();
+    twoDown(canvas);
+    const travelled = () => orbits.reduce((n, o) => n + Math.abs(o.dx) + Math.abs(o.dy), 0);
+    const before = travelled();
+    pointer(canvas, 'pointerdown', 220, 120, 3); // lands well away from the pair
+    pointer(canvas, 'pointermove', 260, 60, 3); // and moves a long way
+    // The renderer is still asked, and answers zero. That is the point: the pinch is
+    // measured between its own two contacts, so a third one has nothing to contribute.
+    expect(travelled()).toBe(before);
+    expect(zooms).toHaveLength(0);
+    expect(spins).toHaveLength(0);
+  });
+
+  it('leaves the pinch measuring its own two contacts', () => {
+    const { canvas, zooms } = setup();
+    twoDown(canvas);
+    pointer(canvas, 'pointerdown', 220, 120, 3);
+    // Spreading the tracked pair still zooms exactly as it would have done alone.
+    pointer(canvas, 'pointermove', 340, 250, 2);
+    expect(zooms.length).toBeGreaterThan(0);
+    expect(zooms[zooms.length - 1]).toBeGreaterThan(1);
+  });
+
+  it('adopts the survivors without jumping when a tracked finger lifts', () => {
+    const { canvas, orbits, zooms, spins } = setup();
+    twoDown(canvas);
+    pointer(canvas, 'pointerdown', 220, 120, 3);
+    const before = { orbits: orbits.length, zooms: zooms.length, spins: spins.length };
+    pointer(canvas, 'pointerup', 160, 250, 1); // one of the original pair goes
+    // Re-baselining must be silent: nothing moves until a finger does.
+    expect(orbits.length).toBe(before.orbits);
+    expect(zooms.length).toBe(before.zooms);
+    expect(spins.length).toBe(before.spins);
+
+    // And the surviving pair drives the gesture from where it stands, not from a jump.
+    pointer(canvas, 'pointermove', 290, 250, 2);
+    expect(orbits.length).toBeGreaterThan(before.orbits);
+    expect(orbits[orbits.length - 1].dx).toBeCloseTo(5, 5); // half of a 10px move: two contacts
   });
 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CubeRenderer } from './cube/renderer';
+import { CubeRenderer, ZOOM_REST, defaultOrientation } from './cube/renderer';
 import { CubeGestures } from './cube/gestures';
 import { CubeAudio } from './cube/audio';
 import { PALETTES, type PaletteId } from './cube/palette';
@@ -14,7 +14,7 @@ import type { StageSplits } from '../solve/stages';
 import { HoldZone } from './components/HoldZone';
 import { Inspection } from './components/Inspection';
 import { Sheets } from './components/Sheets';
-import { BROWSER_TAB_NOTICE, FIRST_RUN } from './components/copy';
+import { BROWSER_TAB_NOTICE, FIRST_RUN, VIEW_RESET_HINT } from './components/copy';
 import { UpdatePrompt } from './components/UpdatePrompt';
 
 /** Remembered so the notice is genuinely one-time rather than shown every launch. */
@@ -103,6 +103,25 @@ export function App() {
     rendererRef.current = renderer;
     const audio = audioRef.current;
 
+    // Taught once per session, the first time the view has actually drifted, and only
+    // while the clock is idle. The reset used to be a line on the first-run card, which
+    // teaches how to undo something the user has not done yet; here the lesson arrives
+    // at the moment it means something. `visual.md` has specified this trigger since the
+    // original spec and it was never built.
+    let resetHinted = false;
+    const maybeHintReset = (): void => {
+      if (resetHinted) return;
+      const solve = solveRef.current;
+      if (solve.session.phase.kind !== 'ready' || solve.scrambling) return;
+      // Shortest-arc angle between the current pose and home. 2*acos(|w|) of the relative
+      // quaternion, absolute so q and -q read the same.
+      const drift = 2 * Math.acos(Math.min(1, Math.abs(renderer.orientationQuaternion().dot(defaultOrientation()))));
+      const zoomed = Math.abs(renderer.getZoom() / ZOOM_REST - 1) > 0.1;
+      if (drift <= Math.PI / 2 && !zoomed) return;
+      resetHinted = true;
+      solve.announceHint(VIEW_RESET_HINT);
+    };
+
     const gestures = new CubeGestures(renderer, {
       // Moved off onGrab, which needs travel to fire. This is earlier in every case and
       // is what puts the acknowledgement inside its 60ms budget.
@@ -114,6 +133,7 @@ export function App() {
       },
       onGrab: (base) => renderer.setGrabbed(base),
       onAxisSwitch: (base) => renderer.setGrabbed(base),
+      onViewMoved: () => maybeHintReset(),
       onRelease: () => renderer.clearGrab(),
       onDetent: () => audio.tick(),
       onSnapStart: (settleMs) => {
@@ -399,10 +419,20 @@ export function App() {
       <div
         className="notation gutter"
         data-refused={solve.refusal !== null}
-        data-mode={solve.refusal !== null ? 'refusal' : session.log.length === 0 ? 'scramble' : 'log'}
+        data-mode={
+          solve.refusal !== null
+            ? 'refusal'
+            : solve.hint !== null
+              ? 'hint'
+              : session.log.length === 0
+                ? 'scramble'
+                : 'log'
+        }
       >
         {solve.refusal !== null ? (
           solve.refusal
+        ) : solve.hint !== null ? (
+          solve.hint
         ) : session.log.length === 0 ? (
           <>
             <span className="notation__label">SCRAMBLE</span>

@@ -539,14 +539,20 @@ them, the second beginning within 280ms of the first ending.
   the end state."
 ~~~
 
-It is taught twice rather than given a control, because a control here would be the only
-action row in a sheet of destinations and the only chrome ever added to the stage. First,
-the first-run overlay gains a third line, beside the two it already carries about dragging
-a sticker and dragging the background. Second, once per session, the first time the view
-is rotated past 90deg or zoomed past 10% **while the clock is idle**, the notation strip's
-reserved slot carries a one-line hint for 1400ms -- the refusal message's slot, timing and
-treatment exactly. No new chrome, no layout shift, never during a running solve. (Both
-lines are voice-writer's.)
+It is taught **once**, rather than given a control, because a control here would be the
+only action row in a sheet of destinations and the only chrome ever added to the stage.
+Once per session, the first time the view is rotated past 90deg or zoomed past 10% **while
+the clock is idle**, the notation strip's reserved slot carries a one-line hint for 1400ms
+-- the refusal message's slot, timing and treatment exactly, but silent and not marked as
+a refusal, because nothing was blocked. No new chrome, no layout shift, never during a
+running solve.
+
+This spec originally taught it twice, adding a line to the first-run overlay as well.
+Voice-writer took that line back on 2026-08-28 and was right to: a card that dismisses at
+first touch would be teaching how to undo something the user has not yet done, which is a
+fact with no purchase at the moment it is given. The overlay's third line went to the
+two-finger gesture instead, which is the thing a user actually reported being unable to
+find.
 
 The reset is a convenience, not a recovery: the cube is never *stuck*, only in a pose you
 did not want, and one drag always fixes that. That is why it does not earn chrome.
@@ -562,11 +568,14 @@ with genuinely no shading answer is dead face-on, where a single face fills the 
 and the cube reads flat — and that one is self-correcting, because it is also the pose you
 can see least of and the first thing anyone does is turn it back.
 
-One consequence to hold: the grab acknowledgement lifts stickers to `k × 1.06` **clamped at
-1.0**, so a layer grabbed on the up face gets no lift at all. Free rotation makes any face
-reachable as the up face, so that hole is now common rather than rare. **The 1px hairline
-tracing the layer boundary is therefore the load-bearing acknowledgement and must never be
-conditional.** With no haptics it is the only proof the touch registered.
+One consequence to hold, and the reason the acknowledgement was rebuilt: the original
+treatment lifted stickers to `k × 1.06` **clamped at 1.0**, so a layer grabbed on the up
+face got no lift at all, and free rotation makes any face reachable as the up face. The
+clamp was never the real problem though — a multiply on an sRGB-encoded bright colour is
+compressed to nothing either way. The lift moved to the body, which has real headroom and
+is also the grout between stickers, so lifting it draws the grabbed layer's grid.
+**The seam is the load-bearing acknowledgement and must never be conditional.** With no
+haptics it is the only proof the touch registered.
 
 ### Undo
 

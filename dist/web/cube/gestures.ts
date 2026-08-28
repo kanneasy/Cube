@@ -148,6 +148,8 @@ export interface GestureCallbacks {
   onGrab(base: TurnBase): void;
   /** The provisional axis changed hands. The grab treatment moves with it; no tick. */
   onAxisSwitch(base: TurnBase): void;
+  /** The user moved the VIEW rather than the puzzle. Never logged as a move. */
+  onViewMoved(): void;
   /** The gesture ended without committing a turn. */
   onRelease(): void;
   /** A quarter turn has settled and should be applied to the logical cube. */
@@ -218,6 +220,19 @@ interface OrbitDrag {
  */
 interface PinchDrag {
   kind: 'pinch';
+  /**
+   * The two contacts this pinch is measured between, by id.
+   *
+   * Not "whichever two the pointer map yields", which is what it used to be: a third
+   * contact landing mid-pinch -- a palm edge, an adjacent finger, entirely plausible on
+   * a two-handed grab -- skewed the centroid against a two-finger baseline and jumped
+   * the cube in a single frame, and if one of the original pair then lifted, span and
+   * twist silently began reading a DIFFERENT pair against the old baseline. On an app
+   * whose whole complaint is rotation nobody asked for, that is the same bug one level
+   * down.
+   */
+  idA: number;
+  idB: number;
   startSpan: number;
   startZoom: number;
   lastCentroid: { x: number; y: number };
@@ -235,10 +250,16 @@ interface PinchDrag {
 /**
  * A touch whose raycast is held over to the next move event.
  *
- * Landing a still-settling turn on pointerdown fires `onCommit`, which reaches the
- * renderer through React. The cubie transforms `pickSticker` raycasts are therefore the
- * PRE-commit ones for the rest of that tick, and picking against them would grab the
- * piece that used to be under the finger. One event later they are current.
+ * Landing a still-settling turn on pointerdown commits it, and `renderer.setState` runs
+ * synchronously in that same handler -- but it only writes each cubie's `basePosition`
+ * and `baseQuaternion`. The MESH transforms `pickSticker` actually raycasts against are
+ * written once per frame, by `applyTransforms` inside the render loop. So a raycast fired
+ * from a pointer handler still hits the last rendered frame, which is the pre-commit one,
+ * and would grab the piece that used to be under the finger. One event later they agree.
+ *
+ * Stated precisely because the obvious wrong version -- "the commit goes through React"
+ * -- would make this deferral look redundant the moment anyone checked how `dispatch`
+ * works, and the frame lag it actually guards against would still be there.
  */
 interface DeferredDrag {
   kind: 'deferred';
@@ -424,24 +445,46 @@ export class CubeGestures {
     return this.animation !== 0;
   }
 
-  private pinchDistance(): number {
-    const [a, b] = [...this.pointers.values()];
-    return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+  /** The pinch's own two contacts, or null once either has lifted. */
+  private pinchPair(drag: PinchDrag): [{ x: number; y: number }, { x: number; y: number }] | null {
+    const a = this.pointers.get(drag.idA);
+    const b = this.pointers.get(drag.idB);
+    return a && b ? [a, b] : null;
+  }
+
+  private pinchDistance(drag: PinchDrag): number {
+    const p = this.pinchPair(drag);
+    return p ? Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) : 0;
   }
 
   /** Screen angle of the vector between the two contacts. Grows CLOCKWISE, y being down. */
-  private pinchAngle(): number {
-    const [a, b] = [...this.pointers.values()];
-    return a && b ? Math.atan2(b.y - a.y, b.x - a.x) : 0;
+  private pinchAngle(drag: PinchDrag): number {
+    const p = this.pinchPair(drag);
+    return p ? Math.atan2(p[1].y - p[0].y, p[1].x - p[0].x) : 0;
   }
 
-  private centroid(): { x: number; y: number } {
-    const all = [...this.pointers.values()];
-    if (all.length === 0) return { x: 0, y: 0 };
-    return {
-      x: all.reduce((n, p) => n + p.x, 0) / all.length,
-      y: all.reduce((n, p) => n + p.y, 0) / all.length,
-    };
+  private pinchCentroid(drag: PinchDrag): { x: number; y: number } {
+    const p = this.pinchPair(drag);
+    return p ? { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 } : drag.lastCentroid;
+  }
+
+  /**
+   * Adopt a new pair without moving the cube.
+   *
+   * Every baseline is re-taken against the surviving contacts, and `twist` is rewound to
+   * whatever roll has already been applied -- so `twist - rollOffset` still evaluates to
+   * exactly where the cube is, and swapping fingers mid-gesture costs nothing.
+   */
+  private rebaselinePinch(drag: PinchDrag): void {
+    const ids = [...this.pointers.keys()];
+    if (ids.length < 2) return;
+    drag.idA = ids[0];
+    drag.idB = ids[1];
+    drag.startSpan = this.pinchDistance(drag);
+    drag.startZoom = this.renderer.getZoom();
+    drag.lastCentroid = this.pinchCentroid(drag);
+    drag.lastTwist = this.pinchAngle(drag);
+    drag.twist = drag.rollApplied + (drag.rollOffset ?? 0);
   }
 
   private stopMomentum(): void {
@@ -556,17 +599,24 @@ export class CubeGestures {
       this.stopAnimation();
       if (live) this.cancelTurn(live);
       else this.callbacks.onRelease();
-      this.drag = {
+      const [idA, idB] = [...this.pointers.keys()];
+      const pinch: PinchDrag = {
         kind: 'pinch',
-        startSpan: this.pinchDistance(),
+        idA,
+        idB,
+        startSpan: 0,
         startZoom: this.renderer.getZoom(),
-        lastCentroid: this.centroid(),
+        lastCentroid: { x: event.clientX, y: event.clientY },
         engaged: false,
-        lastTwist: this.pinchAngle(),
+        lastTwist: 0,
         twist: 0,
         rollOffset: null,
         rollApplied: 0,
       };
+      pinch.startSpan = this.pinchDistance(pinch);
+      pinch.lastCentroid = this.pinchCentroid(pinch);
+      pinch.lastTwist = this.pinchAngle(pinch);
+      this.drag = pinch;
       return;
     }
     if (this.pointers.size > 2) return;
@@ -648,8 +698,8 @@ export class CubeGestures {
     }
 
     if (drag.kind === 'pinch') {
-      const span = this.pinchDistance();
-      const centre = this.centroid();
+      const span = this.pinchDistance(drag);
+      const centre = this.pinchCentroid(drag);
       if (!span || !drag.startSpan) return;
 
       // Three channels, each engaging on its own and none arbitrating with the others.
@@ -660,9 +710,10 @@ export class CubeGestures {
       // even zoomed all the way in, where there is no background left to grab.
       this.renderer.orbitBy(centre.x - drag.lastCentroid.x, centre.y - drag.lastCentroid.y);
       drag.lastCentroid = centre;
+      this.callbacks.onViewMoved();
 
       // Twist -> roll about the view axis.
-      const raw = this.pinchAngle();
+      const raw = this.pinchAngle(drag);
       let step = raw - drag.lastTwist;
       while (step > Math.PI) step -= 2 * Math.PI;
       while (step < -Math.PI) step += 2 * Math.PI;
@@ -696,6 +747,7 @@ export class CubeGestures {
       this.renderer.orbitBy(event.clientX - drag.lastX, event.clientY - drag.lastY);
       drag.lastX = event.clientX;
       drag.lastY = event.clientY;
+      this.callbacks.onViewMoved();
 
       const t = this.scheduler.now();
       drag.history.push({ t, x: event.clientX, y: event.clientY });
@@ -833,7 +885,12 @@ export class CubeGestures {
     // Lifting one finger of a pinch ends the pinch rather than resuming an orbit
     // mid-gesture, which would jump the cube.
     if (drag?.kind === 'pinch') {
-      if (this.pointers.size >= 2) return;
+      if (this.pointers.size >= 2) {
+        // One of the pinch's own contacts left but two are still down. Adopt them rather
+        // than keep measuring span and twist against a pair that no longer exists.
+        if (event.pointerId === drag.idA || event.pointerId === drag.idB) this.rebaselinePinch(drag);
+        return;
+      }
       this.settleZoom();
       if (this.pointers.size === 0) {
         this.drag = null;

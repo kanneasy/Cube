@@ -266,7 +266,12 @@ button {
   }
 }
 
-.notation[data-refused='true'] {
+/* The reset hint shares the refusal's slot, timing and treatment exactly -- a second
+   transient mechanism would be new chrome on a stage that deliberately has none. It does
+   NOT carry data-refused, because nothing was refused: no thunk, and nothing in the DOM
+   claiming a refusal happened. */
+.notation[data-refused='true'],
+.notation[data-mode='hint'] {
   justify-content: flex-start;
   mask-image: none;
   -webkit-mask-image: none;
