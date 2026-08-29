@@ -119,7 +119,16 @@ export function App() {
      *
      * Turning a layer and moving the view both count, because the card teaches both.
      */
+    // Latched, because onViewMoved fires on every pointermove of an orbit or pinch. Left
+    // unguarded this was a synchronous localStorage write at gesture frequency, for the
+    // life of the app, in the one path this file works hardest to keep cheap -- the whole
+    // design of the gesture layer is raycast once, mutate only what is needed, and leave
+    // the rest to the frame. It cost nothing while it hung off onTouchCubie, once per
+    // finger-down; moving it here is what turned it into a per-frame call.
+    let firstRunRetired = false;
     const retireFirstRun = (): void => {
+      if (firstRunRetired) return;
+      firstRunRetired = true;
       setFirstRunSeen(true);
       writeFlag(FIRST_RUN_KEY);
     };
