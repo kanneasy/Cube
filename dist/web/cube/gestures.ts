@@ -24,8 +24,8 @@ const DEG = Math.PI / 180;
  * nearly edge-on has |t| approaching zero, and an uncompensated 1:1 gain explodes; the
  * clamped orbit could never reach that pose and a free one can.
  */
-const TURN_GAIN = 1.06;
-const TANGENT_FLOOR = 0.62;
+const TURN_GAIN = 0.9;
+const TANGENT_FLOOR = 0.68;
 /**
  * One quarter turn is the most a single drag can do, and the layer cannot be dragged
  * past it. Design allowed 180deg of live travel; a fast swipe then carried the layer
@@ -33,10 +33,57 @@ const TANGENT_FLOOR = 0.62;
  * expects -- you turn a face, you do not spin it.
  */
 const LIVE_CLAMP = 90 * DEG;
-/** Travel before the rotation axis is resolved and then locked for the gesture. */
-const AXIS_LOCK_PX = 8;
-/** Release angular speed at or above which a flick fires in the direction of travel. */
-const FLICK_RAD_PER_S = 900 * DEG;
+/**
+ * Travel from touch-down before the turn engages.
+ *
+ * Deliberately small. The threshold is no longer doing the disambiguation work -- the
+ * recent-sample window and the switch below do that -- so it only has to clear noise.
+ * It stays 2px above TAP_MAX_PX, which is a hard requirement: a tap must never engage
+ * a turn.
+ */
+const TURN_ENGAGE_PX = 10;
+/**
+ * The engage direction is measured over the last 45ms, NOT from touch-down.
+ *
+ * This is the whole fix for "it rotated a face I didn't intend". Measuring from
+ * touch-down sums the thumb's contact-patch roll into the intended stroke and resolves
+ * the axis against the total -- and the roll is a low-velocity wander that has already
+ * finished by the time the stroke starts. Over a recent window it drops out entirely.
+ */
+const AXIS_WINDOW_MS = 45;
+/** The axis stays switchable until the live angle reaches this. */
+const AXIS_PROVISIONAL_DEG = 20 * DEG;
+/**
+ * ...or until travel from touch-down reaches this, whichever comes first.
+ *
+ * Both gates are needed. The degree gate governs a normal stroke; the pixel gate governs
+ * a stroke running nearly perpendicular to the tangent, where the angle barely grows and
+ * the axis would otherwise stay provisional forever.
+ */
+const AXIS_PROVISIONAL_PX = 26;
+/**
+ * How far a challenger must beat the incumbent to take the axis over.
+ *
+ * Both tangents are unit vectors, so this ratio is |cos a| / |cos b|. For two tangents
+ * 75 degrees apart on screen it fires about 7 degrees past the bisector: an unambiguous
+ * correction rather than a wobble. Lower and it chatters inside the noise; higher and it
+ * needs a stroke the user has already given up on.
+ */
+const AXIS_SWITCH_RATIO = 1.35;
+/** Release the layer past this much of a quarter and it commits rather than returning. */
+const TURN_COMMIT_FRACTION = 0.35;
+/**
+ * Release angular speed at or above which a flick fires in the direction of travel.
+ *
+ * 520deg/s is about 243px/s at the resting zoom: above what a thumb decelerating into a
+ * lift comes off at, and below a quick swipe. It was 900, which is a quarter turn in
+ * 100ms -- but that number was defence against a one-frame velocity, not a judgement
+ * about flicks. Going much below 520 is its own failure: nearly every release becomes a
+ * flick and the settle branch stops existing.
+ */
+const FLICK_RAD_PER_S = 520 * DEG;
+/** A flick also needs the layer to have actually moved, or a fast 2deg twitch commits. */
+const FLICK_MIN_ANGLE = 8 * DEG;
 
 const ORBIT_DECAY_MS = 400;
 /** Below the rotation this rate of drag produces, momentum simply stops. */
@@ -48,7 +95,7 @@ const ORBIT_CUTOFF_PXPS = 26;
  */
 const VELOCITY_WINDOW_MS = 60;
 
-/** A tap: short, and under the axis-lock threshold, so it can never have turned a layer. */
+/** A tap: short, and under the engage threshold, so it can never have turned a layer. */
 const TAP_MAX_MS = 220;
 const TAP_MAX_PX = 8;
 const DOUBLE_TAP_MS = 280;
@@ -56,12 +103,53 @@ const VIEW_RESET_MS = 260;
 
 /** Pinch travels a little before it engages, so resting two fingers is not a zoom. */
 const PINCH_THRESHOLD_PX = 12;
+/**
+ * Relative twist before roll engages.
+ *
+ * A two-finger grip maps three degrees of freedom onto one hand, so an ordinary pinch
+ * leaks 3-6 degrees of incidental rotation over its course. A cube that quietly tilts
+ * every time you zoom is worse than one that never rolls, and this deadzone is the whole
+ * defence against that. Spent, not banked, so the cube never jumps 9 degrees at engage.
+ */
+const TWIST_ENGAGE = 9 * DEG;
 
-const TURN_SPRING = { stiffness: 520, damping: 26, mass: 0.55 };
+/**
+ * The detent fires at the COMMIT boundary, not at the rounding boundary.
+ *
+ * It used to tick at 45deg, which was also where a turn committed, so the tick meant
+ * "let go now and it turns". With the commit at 0.35 of a quarter, a tick at 45 would
+ * fire 13.5deg after the turn became inevitable -- feedback about a rounding operation.
+ * On a device with no haptics this tick is the only thing that teaches where the
+ * threshold is, so it moves to the threshold.
+ */
+const DETENT_FIRE = TURN_COMMIT_FRACTION * 90 * DEG;
+/** Re-arms coming back, so a wobble on the boundary cannot chatter. */
+const DETENT_RELEASE = 24 * DEG;
+
+/**
+ * Damping ratio 0.763, about 2.5% overshoot, settling in ~157ms. Tightened because a
+ * commit now starts from 31.5deg rather than 45, so the spring carries 30% further --
+ * keeping the clock the same is what stops chained turns queueing behind each other.
+ */
+const TURN_SPRING = { stiffness: 580, damping: 26.5, mass: 0.52 };
+/** A turn cancelled by a second finger returns on this. Critically damped enough not to bounce. */
+const REFUSE_SPRING = { stiffness: 700, damping: 34, mass: 0.5 };
 
 export interface GestureCallbacks {
+  /**
+   * A finger landed on a cubie. Fires at pointerdown, before anything is resolved.
+   *
+   * This is the half that meets the acknowledgement's 60ms budget: `onGrab` cannot,
+   * because it needs travel, so on a slow press it is hundreds of milliseconds away and
+   * on a press that never moves it never arrives.
+   */
+  onTouchCubie(cubieIndex: number): void;
   /** A layer has been grabbed. Used to lift the layer and trace its boundary. */
   onGrab(base: TurnBase): void;
+  /** The provisional axis changed hands. The grab treatment moves with it; no tick. */
+  onAxisSwitch(base: TurnBase): void;
+  /** The user moved the VIEW rather than the puzzle. Never logged as a move. */
+  onViewMoved(): void;
   /** The gesture ended without committing a turn. */
   onRelease(): void;
   /** A quarter turn has settled and should be applied to the logical cube. */
@@ -79,13 +167,26 @@ interface TurnDrag {
   tangent: { x: number; y: number };
   /** How much of that unit tangent survived projection. Feeds the gain. */
   tangentLength: number;
+  /** Kept so the axis can be re-scored while the turn is still provisional. */
+  cubieIndex: number;
+  normal: Vec3;
+  /**
+   * Where the turn started measuring, which is where the finger was at engage -- NOT
+   * where it landed. The engage travel is SPENT, not banked: the layer starts at exactly
+   * 0deg and never pops to an angle the finger already used up getting there.
+   */
+  originX: number;
+  originY: number;
+  /** Touch-down, for the provisional window's pixel backstop. */
   startX: number;
   startY: number;
   angle: number;
-  lastAngle: number;
-  lastTime: number;
-  velocity: number;
-  detent: number;
+  /** Recent angle samples, for a windowed release velocity. The orbit already had this. */
+  history: { t: number; angle: number }[];
+  /** While true the axis can still be taken over by the other candidate. */
+  provisional: boolean;
+  /** Latched at the commit boundary, re-armed coming back. */
+  detentFired: boolean;
 }
 
 interface PendingDrag {
@@ -94,6 +195,12 @@ interface PendingDrag {
   normal: Vec3;
   startX: number;
   startY: number;
+  /**
+   * Recent pointer samples, so the engage direction is read over the last AXIS_WINDOW_MS
+   * rather than from touch-down. The difference between those two vectors is exactly the
+   * thumb-roll, and resolving the axis against the roll is what turned the wrong layer.
+   */
+  history: { t: number; x: number; y: number }[];
 }
 
 interface OrbitDrag {
@@ -113,13 +220,58 @@ interface OrbitDrag {
  */
 interface PinchDrag {
   kind: 'pinch';
+  /**
+   * The two contacts this pinch is measured between, by id.
+   *
+   * Not "whichever two the pointer map yields", which is what it used to be: a third
+   * contact landing mid-pinch -- a palm edge, an adjacent finger, entirely plausible on
+   * a two-handed grab -- skewed the centroid against a two-finger baseline and jumped
+   * the cube in a single frame, and if one of the original pair then lifted, span and
+   * twist silently began reading a DIFFERENT pair against the old baseline. On an app
+   * whose whole complaint is rotation nobody asked for, that is the same bug one level
+   * down.
+   */
+  idA: number;
+  idB: number;
   startSpan: number;
   startZoom: number;
   lastCentroid: { x: number; y: number };
   engaged: boolean;
+  /** Last raw angle between the contacts, for unwrapping across the +/-pi seam. */
+  lastTwist: number;
+  /** Unwrapped twist since the pinch baselined. */
+  twist: number;
+  /** Frozen at engage so the deadzone stays spent even if the twist reverses through zero. */
+  rollOffset: number | null;
+  /** How much roll has already been handed to the renderer. */
+  rollApplied: number;
 }
 
-type Drag = PendingDrag | TurnDrag | OrbitDrag | PinchDrag | null;
+/**
+ * A touch whose raycast is held over to the next move event.
+ *
+ * Landing a still-settling turn on pointerdown commits it, and `renderer.setState` runs
+ * synchronously in that same handler -- but it only writes each cubie's `basePosition`
+ * and `baseQuaternion`. The MESH transforms `pickSticker` actually raycasts against are
+ * written once per frame, by `applyTransforms` inside the render loop. So a raycast fired
+ * from a pointer handler still hits the last rendered frame, which is the pre-commit one,
+ * and would grab the piece that used to be under the finger. One event later they agree.
+ *
+ * Stated precisely because the obvious wrong version -- "the commit goes through React"
+ * -- would make this deferral look redundant the moment anyone checked how `dispatch`
+ * works, and the frame lag it actually guards against would still be there.
+ */
+interface DeferredDrag {
+  kind: 'deferred';
+  x: number;
+  y: number;
+  t: number;
+}
+
+type Drag = PendingDrag | TurnDrag | OrbitDrag | PinchDrag | DeferredDrag | null;
+
+/** The view axis. The camera never rotates, so this is simply world +z. */
+const ROLL_AXIS = new Vector3(0, 0, 1);
 
 const AXES: Vec3[] = [
   [1, 0, 0],
@@ -160,12 +312,14 @@ export function resolveAxis(
   normal: Vec3,
   dragX: number,
   dragY: number,
-): { base: TurnBase; tangent: { x: number; y: number }; tangentLength: number } | null {
+): { base: TurnBase; tangent: { x: number; y: number }; tangentLength: number; confidence: number } | null {
   const coords = renderer.cubieCoords(cubieIndex);
   // Pointer y grows downward; flip it so both sides of the dot product are y-up.
   const drag = { x: dragX, y: -dragY };
 
   let best: { base: TurnBase; tangent: { x: number; y: number }; tangentLength: number; score: number } | null = null;
+  /** The best score this drag did NOT pick. How close the two candidates ran. */
+  let runnerUp = 0;
 
   for (let axis = 0; axis < 3; axis++) {
     if (normal[axis] !== 0) continue; // a rotation about the sticker's own normal spins it in place
@@ -182,16 +336,54 @@ export function resolveAxis(
     const tangent = { x: screen.x * flip, y: screen.y * flip };
     const score = tangent.x * drag.x + tangent.y * drag.y;
     if (!best || Math.abs(score) > Math.abs(best.score)) {
+      if (best) runnerUp = Math.abs(best.score);
       best = { base, tangent, tangentLength: screen.length, score };
+    } else if (Math.abs(score) > runnerUp) {
+      runnerUp = Math.abs(score);
     }
   }
+  if (!best) return null;
 
-  return best ? { base: best.base, tangent: best.tangent, tangentLength: best.tangentLength } : null;
+  // Infinite when the runner-up scores nothing at all -- a drag straight along one
+  // tangent, which is as decisive as this gets.
+  const confidence = runnerUp > 1e-6 ? Math.abs(best.score) / runnerUp : Number.POSITIVE_INFINITY;
+  return { base: best.base, tangent: best.tangent, tangentLength: best.tangentLength, confidence };
+}
+
+/**
+ * Angular speed over the last `VELOCITY_WINDOW_MS`, never a single frame.
+ *
+ * The turn read a one-frame delta while the orbit read a window, and the window's own
+ * comment says why that is wrong: on iOS the last pointermove before a lift routinely
+ * carries a 2ms dt and a jitter pixel. As a one-frame velocity that reads as a flick
+ * nobody asked for -- and, worse in practice, any pause before lifting reads as a dead
+ * stop, which killed the flick branch and forced the full 45 degrees. The guard existed;
+ * it was simply never applied to the gesture that matters most.
+ */
+export function releaseVelocity(history: readonly { t: number; angle: number }[]): number {
+  if (history.length < 2) return 0;
+  const first = history[0];
+  const last = history[history.length - 1];
+  const dt = (last.t - first.t) / 1000;
+  if (dt <= 0) return 0;
+  return (last.angle - first.angle) / dt;
 }
 
 export class CubeGestures {
   private drag: Drag = null;
   private animation = 0;
+  /** Set while a turn is springing to its target: finishes it early and commits. */
+  private landTurn: (() => void) | null = null;
+  /** What a stopped animation still owes, so cancelling one cannot strand the cube. */
+  private onAnimationStopped: (() => void) | null = null;
+  /**
+   * Bumped whenever an animation is stopped or replaced. A frame callback checks it
+   * before doing anything, so a superseded spring cannot keep writing orientation, zoom
+   * or layer rotation behind whatever replaced it -- which is the same "two loops
+   * fighting over the same state" failure `stopAnimation` was written for, arriving one
+   * frame later through a callback that was already queued.
+   */
+  private springGeneration = 0;
   /** Tracked apart from `animation` so a touch can kill a glide without killing a snap. */
   private momentum = 0;
   /**
@@ -203,6 +395,15 @@ export class CubeGestures {
   private lastTapEndedAt = Number.NEGATIVE_INFINITY;
   private pressedAt = 0;
   private pressedAtXY = { x: 0, y: 0 };
+  /**
+   * False for the whole of any sequence that ever had two fingers down.
+   *
+   * The tap test runs against `pressedAt`, which the SECOND finger overwrites. Pinch by
+   * anchoring one finger and moving the other -- the ordinary way -- and lifting the
+   * anchor read as a tap; two pinches in a row read as a double tap and reset the view.
+   * A gesture that spent any time as a pinch is not a tap, whatever its last finger did.
+   */
+  private tapCandidate = false;
   /** Live contacts, so a second finger can promote a drag into a pinch. */
   private readonly pointers = new Map<number, { x: number; y: number }>();
 
@@ -244,18 +445,46 @@ export class CubeGestures {
     return this.animation !== 0;
   }
 
-  private pinchDistance(): number {
-    const [a, b] = [...this.pointers.values()];
-    return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+  /** The pinch's own two contacts, or null once either has lifted. */
+  private pinchPair(drag: PinchDrag): [{ x: number; y: number }, { x: number; y: number }] | null {
+    const a = this.pointers.get(drag.idA);
+    const b = this.pointers.get(drag.idB);
+    return a && b ? [a, b] : null;
   }
 
-  private centroid(): { x: number; y: number } {
-    const all = [...this.pointers.values()];
-    if (all.length === 0) return { x: 0, y: 0 };
-    return {
-      x: all.reduce((n, p) => n + p.x, 0) / all.length,
-      y: all.reduce((n, p) => n + p.y, 0) / all.length,
-    };
+  private pinchDistance(drag: PinchDrag): number {
+    const p = this.pinchPair(drag);
+    return p ? Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) : 0;
+  }
+
+  /** Screen angle of the vector between the two contacts. Grows CLOCKWISE, y being down. */
+  private pinchAngle(drag: PinchDrag): number {
+    const p = this.pinchPair(drag);
+    return p ? Math.atan2(p[1].y - p[0].y, p[1].x - p[0].x) : 0;
+  }
+
+  private pinchCentroid(drag: PinchDrag): { x: number; y: number } {
+    const p = this.pinchPair(drag);
+    return p ? { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 } : drag.lastCentroid;
+  }
+
+  /**
+   * Adopt a new pair without moving the cube.
+   *
+   * Every baseline is re-taken against the surviving contacts, and `twist` is rewound to
+   * whatever roll has already been applied -- so `twist - rollOffset` still evaluates to
+   * exactly where the cube is, and swapping fingers mid-gesture costs nothing.
+   */
+  private rebaselinePinch(drag: PinchDrag): void {
+    const ids = [...this.pointers.keys()];
+    if (ids.length < 2) return;
+    drag.idA = ids[0];
+    drag.idB = ids[1];
+    drag.startSpan = this.pinchDistance(drag);
+    drag.startZoom = this.renderer.getZoom();
+    drag.lastCentroid = this.pinchCentroid(drag);
+    drag.lastTwist = this.pinchAngle(drag);
+    drag.twist = drag.rollApplied + (drag.rollOffset ?? 0);
   }
 
   private stopMomentum(): void {
@@ -274,10 +503,42 @@ export class CubeGestures {
    * shared handle while the other kept going underneath the next gesture.
    */
   private stopAnimation(): void {
+    this.springGeneration += 1;
     if (this.animation) {
       this.scheduler.caf(this.animation);
       this.animation = 0;
     }
+    // A cancelled turn still has to put its layer down. Without this, stopping the
+    // cancel spring early leaves the layer frozen at whatever angle it had reached.
+    const owed = this.onAnimationStopped;
+    if (owed) {
+      this.onAnimationStopped = null;
+      owed();
+    }
+  }
+
+  /**
+   * A live turn interrupted by a second finger returns to zero and NEVER commits.
+   *
+   * Both the spec and the code were wrong here, differently. The spec ignored the second
+   * finger outright, which fails "two fingers work everywhere" and leaves a rule nobody
+   * can hold. The code tore the turn down instantly, so an accidental brush discarded a
+   * live turn with a snap-back and no explanation -- which reads exactly like the app
+   * refusing. What survives is the load-bearing half: a surprise commit is unforgivable,
+   * so promotion can only ever cancel. Silent: the puzzle did not change, and nothing
+   * was refused.
+   */
+  private cancelTurn(drag: TurnDrag): void {
+    let cleared = false;
+    const clear = (): void => {
+      if (cleared) return;
+      cleared = true;
+      this.onAnimationStopped = null;
+      this.renderer.setLayerRotation(null, 0);
+      this.callbacks.onRelease();
+    };
+    this.spring(drag.angle, 0, 0, REFUSE_SPRING, (v) => this.renderer.setLayerRotation(drag.base, v), clear);
+    this.onAnimationStopped = clear;
   }
 
   /**
@@ -315,6 +576,9 @@ export class CubeGestures {
 
     this.pressedAt = this.scheduler.now();
     this.pressedAtXY = { x: event.clientX, y: event.clientY };
+    // Only a lone first finger can still become a tap; a second one disqualifies the
+    // whole sequence until every finger is up again.
+    this.tapCandidate = this.pointers.size === 1;
 
     // Touching the cube kills any momentum on the same frame. Without that release
     // valve a 400ms decay is a nuisance mid-solve; with it, the cube stops dead under
@@ -326,30 +590,57 @@ export class CubeGestures {
     // keeps its live rotation applied every frame and sits frozen mid-turn until the
     // user happens to start and finish another turn.
     if (this.pointers.size === 2) {
-      if (this.drag?.kind === 'turn') {
-        this.renderer.setLayerRotation(null, 0);
-        this.callbacks.onRelease();
-      }
+      const live = this.drag?.kind === 'turn' ? this.drag : null;
+      // A turn already RELEASED has expressed the intent to commit; do not take that
+      // back. Only a turn still under the finger is cancelled.
+      this.landSettlingTurn();
       // A pinch must not start on top of a running spring or reset either; they would
       // fight over orientation and zoom every frame.
       this.stopAnimation();
-      this.drag = {
+      if (live) this.cancelTurn(live);
+      else this.callbacks.onRelease();
+      const [idA, idB] = [...this.pointers.keys()];
+      const pinch: PinchDrag = {
         kind: 'pinch',
-        startSpan: this.pinchDistance(),
+        idA,
+        idB,
+        startSpan: 0,
         startZoom: this.renderer.getZoom(),
-        lastCentroid: this.centroid(),
+        lastCentroid: { x: event.clientX, y: event.clientY },
         engaged: false,
+        lastTwist: 0,
+        twist: 0,
+        rollOffset: null,
+        rollApplied: 0,
       };
+      pinch.startSpan = this.pinchDistance(pinch);
+      pinch.lastCentroid = this.pinchCentroid(pinch);
+      pinch.lastTwist = this.pinchAngle(pinch);
+      this.drag = pinch;
       return;
     }
     if (this.pointers.size > 2) return;
-    if (this.animating) return;
+
+    // A turn still springing is LANDED, not allowed to eat this touch. It used to be
+    // `if (this.animating) return`, which threw away every pointerdown for the ~200ms
+    // the spring ran: turning at speed silently lost every second turn, and the cube
+    // read as heavy rather than as unresponsive. A view reset or zoom settle has
+    // nothing to commit, so it is simply stopped.
+    const landed = this.landTurn !== null;
+    this.landSettlingTurn();
+    this.stopAnimation();
 
     try {
       this.renderer.canvas.setPointerCapture(event.pointerId);
     } catch {
       // A synthetic or already-captured pointer. Capture keeps a drag alive past the
       // canvas edge; it is not required for the gesture to work.
+    }
+
+    if (landed) {
+      // The commit has not reached the renderer yet. Pick on the next move instead.
+      this.drag = { kind: 'deferred', x: event.clientX, y: event.clientY, t: this.pressedAt };
+      return;
     }
 
     const hit = this.renderer.pickSticker(event.clientX, event.clientY);
@@ -360,7 +651,9 @@ export class CubeGestures {
         normal: hit.worldNormal,
         startX: event.clientX,
         startY: event.clientY,
+        history: [{ t: this.pressedAt, x: event.clientX, y: event.clientY }],
       };
+      this.callbacks.onTouchCubie(hit.cubieIndex);
       return;
     }
 
@@ -370,6 +663,7 @@ export class CubeGestures {
       lastY: event.clientY,
       history: [{ t: this.scheduler.now(), x: event.clientX, y: event.clientY }],
     };
+    this.callbacks.onRelease();
   };
 
   // The state mutation happens synchronously here and only the redraw is left to the
@@ -380,20 +674,66 @@ export class CubeGestures {
     if (this.pointers.has(event.pointerId)) {
       this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     }
-    const drag = this.drag;
+    let drag = this.drag;
     if (!drag) return;
     event.preventDefault();
 
+    if (drag.kind === 'deferred') {
+      const hit = this.renderer.pickSticker(drag.x, drag.y);
+      // Measured from where the finger LANDED, not from here, so the turn that follows
+      // is the one the whole stroke asked for.
+      this.drag = hit
+        ? {
+            kind: 'pending',
+            cubieIndex: hit.cubieIndex,
+            normal: hit.worldNormal,
+            startX: drag.x,
+            startY: drag.y,
+            history: [{ t: drag.t, x: drag.x, y: drag.y }],
+          }
+        : { kind: 'orbit', lastX: drag.x, lastY: drag.y, history: [{ t: drag.t, x: drag.x, y: drag.y }] };
+      if (hit) this.callbacks.onTouchCubie(hit.cubieIndex);
+      // Only ever pending or orbit, which is what keeps `deferred` out of the union below.
+      drag = this.drag as PendingDrag | OrbitDrag;
+    }
+
     if (drag.kind === 'pinch') {
-      const span = this.pinchDistance();
-      const centre = this.centroid();
+      const span = this.pinchDistance(drag);
+      const centre = this.pinchCentroid(drag);
       if (!span || !drag.startSpan) return;
 
-      // The centroid orbits even before the span has moved enough to be a zoom, so two
-      // fingers can always turn the cube.
+      // Three channels, each engaging on its own and none arbitrating with the others.
+      // Picking "the one gesture they must have meant" is what makes a gesture feel like
+      // it is guessing, and it would reproduce the wrong-layer complaint one level up.
+
+      // Centroid -> tumble. Engages immediately, so two fingers can always turn the cube
+      // even zoomed all the way in, where there is no background left to grab.
       this.renderer.orbitBy(centre.x - drag.lastCentroid.x, centre.y - drag.lastCentroid.y);
       drag.lastCentroid = centre;
+      this.callbacks.onViewMoved();
 
+      // Twist -> roll about the view axis.
+      const raw = this.pinchAngle(drag);
+      let step = raw - drag.lastTwist;
+      while (step > Math.PI) step -= 2 * Math.PI;
+      while (step < -Math.PI) step += 2 * Math.PI;
+      drag.lastTwist = raw;
+      drag.twist += step;
+      if (drag.rollOffset === null && Math.abs(drag.twist) >= TWIST_ENGAGE) {
+        // Frozen here, so twisting back through zero cannot flip the deadzone's sign and
+        // jerk the cube by 18 degrees.
+        drag.rollOffset = Math.sign(drag.twist) * TWIST_ENGAGE;
+      }
+      if (drag.rollOffset !== null) {
+        const target = drag.twist - drag.rollOffset;
+        // The camera never rotates, so the screen normal IS world +z. Screen angle grows
+        // clockwise while a positive rotation about +z is counter-clockwise from the
+        // camera, so the sign flips.
+        this.renderer.spinBy(ROLL_AXIS, -(target - drag.rollApplied));
+        drag.rollApplied = target;
+      }
+
+      // Span -> zoom.
       if (!drag.engaged && Math.abs(span - drag.startSpan) < PINCH_THRESHOLD_PX) return;
       drag.engaged = true;
       // Fingers apart means a bigger cube: f follows the span directly.
@@ -407,6 +747,7 @@ export class CubeGestures {
       this.renderer.orbitBy(event.clientX - drag.lastX, event.clientY - drag.lastY);
       drag.lastX = event.clientX;
       drag.lastY = event.clientY;
+      this.callbacks.onViewMoved();
 
       const t = this.scheduler.now();
       drag.history.push({ t, x: event.clientX, y: event.clientY });
@@ -414,35 +755,87 @@ export class CubeGestures {
       return;
     }
 
-    const dx = event.clientX - drag.startX;
-    const dy = event.clientY - drag.startY;
+    const now = this.scheduler.now();
 
     if (drag.kind === 'pending') {
-      if (Math.hypot(dx, dy) < AXIS_LOCK_PX) return;
-      const resolved = resolveAxis(this.renderer, drag.cubieIndex, drag.normal, dx, dy);
+      drag.history.push({ t: now, x: event.clientX, y: event.clientY });
+      while (drag.history.length > 2 && now - drag.history[0].t > AXIS_WINDOW_MS) drag.history.shift();
+
+      if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < TURN_ENGAGE_PX) return;
+
+      // The RECENT stroke, not the whole travel. Falls back to the whole travel when
+      // there is only one sample, which is a flick fast enough to have no window.
+      const from = drag.history.length > 1 ? drag.history[0] : { x: drag.startX, y: drag.startY };
+      const resolved = resolveAxis(
+        this.renderer,
+        drag.cubieIndex,
+        drag.normal,
+        event.clientX - from.x,
+        event.clientY - from.y,
+      );
       if (!resolved) return;
+
       this.drag = {
         kind: 'turn',
         base: resolved.base,
         tangent: resolved.tangent,
         tangentLength: resolved.tangentLength,
+        cubieIndex: drag.cubieIndex,
+        normal: drag.normal,
+        // Spent, not banked: the turn measures from here, so it starts at exactly zero.
+        originX: event.clientX,
+        originY: event.clientY,
         startX: drag.startX,
         startY: drag.startY,
         angle: 0,
-        lastAngle: 0,
-        lastTime: this.scheduler.now(),
-        velocity: 0,
-        detent: 0,
+        history: [{ t: now, angle: 0 }],
+        provisional: true,
+        detentFired: false,
       };
       this.callbacks.onGrab(resolved.base);
-      this.applyTurn(this.drag as TurnDrag, dx, dy);
+      this.applyTurn(this.drag as TurnDrag, 0, 0);
       return;
     }
 
-    this.applyTurn(drag, dx, dy);
+    this.applyTurn(drag, event.clientX - drag.originX, event.clientY - drag.originY);
   };
 
+  /**
+   * Let the other candidate axis take the turn over, for a short window after engage.
+   *
+   * A wrong first guess self-corrects inside a few frames instead of costing a failed
+   * turn and a redo -- which is strictly better than making the user wait longer up
+   * front for certainty, since waiting is the other half of what they complained about.
+   * The window closes well below the commit boundary, so a switch can never take back
+   * something that already looked committed.
+   */
+  private maybeSwitchAxis(drag: TurnDrag, dx: number, dy: number): void {
+    if (!drag.provisional) return;
+    if (
+      Math.abs(drag.angle) >= AXIS_PROVISIONAL_DEG ||
+      Math.hypot(drag.originX + dx - drag.startX, drag.originY + dy - drag.startY) >= AXIS_PROVISIONAL_PX
+    ) {
+      drag.provisional = false;
+      return;
+    }
+
+    const resolved = resolveAxis(this.renderer, drag.cubieIndex, drag.normal, dx, dy);
+    if (!resolved || resolved.base === drag.base) return;
+    if (resolved.confidence < AXIS_SWITCH_RATIO) return;
+
+    // Put the old layer down in the same frame, or it sits frozen mid-turn.
+    this.renderer.setLayerRotation(null, 0);
+    drag.base = resolved.base;
+    drag.tangent = resolved.tangent;
+    drag.tangentLength = resolved.tangentLength;
+    drag.detentFired = false; // nothing was decided about a turn, so no tick
+    this.callbacks.onAxisSwitch(resolved.base);
+  }
+
   private applyTurn(drag: TurnDrag, dx: number, dy: number): void {
+    // The axis can still change hands, and it re-scores against the drag from the origin.
+    this.maybeSwitchAxis(drag, dx, dy);
+
     // Per quarter turn: TURN_GAIN * S * max(floor, |t|) px along the tangent. Stated in
     // the cube's own on-screen units, so a zoomed-in cube is heavier to turn -- the same
     // rule the trackball follows, and physically honest for a bigger object.
@@ -453,18 +846,19 @@ export class CubeGestures {
     const angle = Math.max(-LIVE_CLAMP, Math.min(LIVE_CLAMP, raw));
 
     const t = this.scheduler.now();
-    const dt = Math.max(1, t - drag.lastTime) / 1000;
-    drag.velocity = (angle - drag.lastAngle) / dt;
-    drag.lastAngle = angle;
-    drag.lastTime = t;
     drag.angle = angle;
+    drag.history.push({ t, angle });
+    while (drag.history.length > 2 && t - drag.history[0].t > VELOCITY_WINDOW_MS) drag.history.shift();
 
-    // The detent: crossing a 45-degree boundary is the moment the nearest quarter turn
-    // changes. It is the difference between dragging a shape and turning a mechanism.
-    const detent = Math.round(angle / (90 * DEG));
-    if (detent !== drag.detent) {
-      drag.detent = detent;
+    // The detent, at the COMMIT boundary: "past this, releasing turns the layer". With
+    // no haptics this tick is the only thing that teaches where the threshold is, so it
+    // has to sit ON the threshold. It re-arms coming back, with hysteresis, so a wobble
+    // on the boundary cannot chatter.
+    if (!drag.detentFired && Math.abs(angle) >= DETENT_FIRE) {
+      drag.detentFired = true;
       this.callbacks.onDetent();
+    } else if (drag.detentFired && Math.abs(angle) <= DETENT_RELEASE) {
+      drag.detentFired = false;
     }
 
     this.renderer.setLayerRotation(drag.base, angle);
@@ -478,7 +872,7 @@ export class CubeGestures {
     // have committed a turn. Two of them reset the view.
     const now = this.scheduler.now();
     const travel = Math.hypot(event.clientX - this.pressedAtXY.x, event.clientY - this.pressedAtXY.y);
-    if (now - this.pressedAt <= TAP_MAX_MS && travel <= TAP_MAX_PX) {
+    if (this.tapCandidate && now - this.pressedAt <= TAP_MAX_MS && travel <= TAP_MAX_PX) {
       if (now - this.lastTapEndedAt <= DOUBLE_TAP_MS) {
         this.lastTapEndedAt = Number.NEGATIVE_INFINITY;
         this.drag = null;
@@ -491,10 +885,22 @@ export class CubeGestures {
     // Lifting one finger of a pinch ends the pinch rather than resuming an orbit
     // mid-gesture, which would jump the cube.
     if (drag?.kind === 'pinch') {
-      if (this.pointers.size < 2) {
-        this.drag = null;
-        this.settleZoom();
+      if (this.pointers.size >= 2) {
+        // One of the pinch's own contacts left but two are still down. Adopt them rather
+        // than keep measuring span and twist against a pair that no longer exists.
+        if (event.pointerId === drag.idA || event.pointerId === drag.idB) this.rebaselinePinch(drag);
+        return;
       }
+      this.settleZoom();
+      if (this.pointers.size === 0) {
+        this.drag = null;
+        return;
+      }
+      // Hand the surviving finger a fresh orbit rather than leaving it dead until it
+      // lifts too. Pinching to frame the cube and then carrying on with one finger is
+      // the natural motion, and it used to do nothing at all.
+      const [p] = [...this.pointers.values()];
+      this.drag = { kind: 'orbit', lastX: p.x, lastY: p.y, history: [{ t: now, x: p.x, y: p.y }] };
       return;
     }
 
@@ -506,6 +912,7 @@ export class CubeGestures {
       // Already released; nothing to undo.
     }
 
+    if (drag.kind === 'deferred') return;
     if (drag.kind === 'pending') {
       this.callbacks.onRelease();
       return;
@@ -519,22 +926,29 @@ export class CubeGestures {
 
   private settleTurn(drag: TurnDrag): void {
     const quarter = 90 * DEG;
-    // A flick fires to the next quarter turn in the direction of travel even if the
-    // layer has moved less than 45 degrees. That is what makes a flick feel like a
-    // flick rather than like a command.
-    // A flick fires to the next quarter in the direction of travel even under 45deg;
-    // both branches are then held to a single quarter, so a hard swipe and a slow drag
-    // commit the same amount and only the feel differs.
-    const raw =
-      Math.abs(drag.velocity) >= FLICK_RAD_PER_S
-        ? (drag.velocity > 0 ? Math.floor(drag.angle / quarter) + 1 : Math.ceil(drag.angle / quarter) - 1)
-        : Math.round(drag.angle / quarter);
-    const target = Math.max(-1, Math.min(1, raw)) * quarter;
+    const velocity = releaseVelocity(drag.history);
+    // The live angle is clamped to one quarter either way, so this is a threshold rather
+    // than a rounding. A flick fires to the next quarter in the direction of travel even
+    // under the threshold -- but only once the layer has actually moved, or a fast
+    // two-degree twitch on release commits a whole quarter.
+    const flicked = Math.abs(velocity) >= FLICK_RAD_PER_S && Math.abs(drag.angle) >= FLICK_MIN_ANGLE;
+    const quarters = flicked
+      ? Math.sign(velocity)
+      : Math.abs(drag.angle) >= TURN_COMMIT_FRACTION * quarter
+        ? Math.sign(drag.angle)
+        : 0;
+    const target = Math.max(-1, Math.min(1, quarters)) * quarter;
 
     this.callbacks.onSnapStart(170);
 
-    // The release velocity is carried into the spring as initial velocity.
-    this.spring(drag.angle, target, drag.velocity, TURN_SPRING, (value) => this.renderer.setLayerRotation(drag.base, value), () => {
+    // Idempotent on purpose. Two things can reach it -- the spring finishing on its own
+    // and a new touch landing it early -- and a turn committed twice is a move the user
+    // never made.
+    let landed = false;
+    const land = (): void => {
+      if (landed) return;
+      landed = true;
+      this.landTurn = null;
       // Never more than one quarter, whatever the flick did.
       const quarters = Math.max(-1, Math.min(1, Math.round(target / quarter)));
       const amount = ((quarters % 4) + 4) % 4;
@@ -544,7 +958,24 @@ export class CubeGestures {
         return;
       }
       this.callbacks.onCommit({ base: drag.base, amount: amount as 1 | 2 | 3 });
-    });
+    };
+    this.landTurn = land;
+
+    // The release velocity is carried into the spring as initial velocity.
+    this.spring(drag.angle, target, velocity, TURN_SPRING, (value) => this.renderer.setLayerRotation(drag.base, value), land);
+  }
+
+  /**
+   * Finish a turn that is still springing, right now, and commit it.
+   *
+   * The turn is already decided by the time the spring starts -- the spring is how it
+   * looks, not what it does -- so landing it early loses nothing but the animation.
+   */
+  private landSettlingTurn(): void {
+    const land = this.landTurn;
+    if (!land) return;
+    this.stopAnimation();
+    land();
   }
 
   /**
@@ -602,7 +1033,9 @@ export class CubeGestures {
     const fromF = this.renderer.getZoom();
     const start = this.scheduler.now();
 
+    const generation = ++this.springGeneration;
     const step = (): void => {
+      if (generation !== this.springGeneration) return;
       const raw = Math.min(1, (this.scheduler.now() - start) / VIEW_RESET_MS);
       // cubic-bezier(0.16, 1, 0.3, 1), near enough for a 260ms view move.
       const p = 1 - (1 - raw) ** 3;
@@ -632,11 +1065,15 @@ export class CubeGestures {
     onValue: (value: number) => void,
     onDone?: () => void,
   ): void {
+    const generation = ++this.springGeneration;
+    const superseded = (): boolean => generation !== this.springGeneration;
+
     if (prefersReducedMotion()) {
       // Still animated, because a turn that teleports is harder to follow than one
       // that moves -- just short, linear, and with no overshoot to read as bounce.
       const start = this.scheduler.now();
       const glide = (): void => {
+        if (superseded()) return;
         const t = Math.min(1, (this.scheduler.now() - start) / REDUCED_SETTLE_MS);
         onValue(from + (to - from) * t);
         if (t < 1) {
@@ -655,6 +1092,7 @@ export class CubeGestures {
     let last = this.scheduler.now();
 
     const step = (): void => {
+      if (superseded()) return;
       const t = this.scheduler.now();
       const dt = Math.min(0.032, Math.max(0.001, (t - last) / 1000));
       last = t;
@@ -675,17 +1113,3 @@ export class CubeGestures {
     this.animation = this.scheduler.raf(step);
   }
 }
-
-export const DEFAULTS = {
-  TURN_GAIN,
-  TANGENT_FLOOR,
-  FLICK_RAD_PER_S,
-  AXIS_LOCK_PX,
-  PINCH_THRESHOLD_PX,
-  ORBIT_DECAY_MS,
-  ORBIT_CUTOFF_PXPS,
-  VELOCITY_WINDOW_MS,
-  TAP_MAX_MS,
-  TAP_MAX_PX,
-  DOUBLE_TAP_MS,
-};

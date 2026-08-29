@@ -149,12 +149,79 @@ carry the whole tactile burden, so these numbers are the product, not decoration
 
 ### Grabbing a layer
 
-Touch begins on a sticker. **Within 60ms** the app must acknowledge — this budget is
-absolute, because with no haptic there is no other confirmation that the touch registered.
+Touch begins on the cube. **Within 60ms** the app must acknowledge — absolute, because
+with no haptic there is no other confirmation the touch registered. The old spec fired
+this at axis resolution, which needs travel: on a slow press that is 300ms, and on a press
+that never moves it never fires at all. The budget was unmeetable by construction. It
+fires at TOUCH-DOWN now, and expands.
 
-- The grabbed layer's nine stickers lift to `k × 1.06` (clamped at 1.0).
-- A 1px `rgba(255, 255, 255, 0.22)` hairline traces the layer's outer boundary.
-- Both appear over 60ms, `cubic-bezier(0.16, 1, 0.3, 1)`. Both clear on release over 120ms.
+**Stage one, pointerdown.** A square hairline RING traces the touched cubie's face,
+centred in the grout between the sticker edge and the cubie edge. "I have this square."
+
+**Stage two, engage.** The ring dissolves into the SEAM — the cut plane where the layer
+will shear away — and the whole layer lifts. "This is what will turn."
+
+The seam is the right object, not a silhouette. A silhouette of a 3x3x1 slab is a
+screen-space computation that changes topology as the cube rotates; the cut is one closed
+square loop in the cube's own frame, four segments, known in closed form, parented to the
+root so it rotates for free. And it falls exactly in the 0.02-unit gap the geometry
+already leaves between cubie rows, so the seam does not overlay the cube — it lights a
+groove that is already there.
+
+~~~ grab-geometry
+RING (stage one): a square ring on the touched cubie's outer face.
+  centreline half-width r = (CUBIE * (1 - 2*inset) + CUBIE) / 4
+    Cardinal (inset 0.06): r = 0.4606.  Universal (inset 0.09): r = 0.4459.
+  pushed 0.008 world units proud of the cubie's face plane.
+
+SEAM (stage two): the cut plane's closed loop, on the cube's four side faces.
+  layer on axis a at coordinate c = +1  ->  ONE loop at a = +0.5
+                                  c = -1  ->  ONE loop at a = -0.5
+                                  c =  0  ->  TWO loops, at a = -0.5 and a = +0.5
+  A slice takes two cuts. That is the same fact that makes a slice cost 2 under OBTM,
+  and showing it is honest.
+
+WIDTH, both: w = max(0.02, 1.2 / unitScreenPx()) world units.
+  Below f ~ 0.53 the 1.2 CSS px minimum governs, so the line never falls below legibility
+  zoomed out (a world-fixed 0.02 renders 0.55px at f_min and shimmers). Above it the
+  groove width governs and the seam reads as the groove itself lighting up.
+
+MATERIAL, both:
+  color #FFFFFF, additive blending, transparent, opacity 0.62,
+  depthWrite false, depthTest TRUE, side DoubleSide.
+  Additive is right in a renderer with flat MeshBasicMaterial, no lights and a black
+  room: it lifts what is under it rather than replacing it, so it survives on plastic
+  AND on a saturated sticker. On #000 it renders ~#9E9E9E -- a light line, not a glow.
+  depthTest must stay TRUE: the back of the loop must be hidden or it reads as a
+  wireframe box rather than a groove on a solid.
+~~~
+
+~~~ grab-lift
+Applied in applyShading, in LINEAR light, gated on a `grabbed` flag so the auto-scramble
+-- which also sets liveBase -- does not light layers up in sequence.
+
+BODY   x 1.55, UNCLAMPED.  #1A1B1F -> #222428.  #0B0C0E -> #111214.  #28292E -> #33343A.
+  A clear 6-11 byte step on a dark neutral against a black room, at EVERY orientation.
+  Because the body is the 6% grout, this draws the grabbed layer's 3x3 grid in light
+  grey. This is the lift.
+STICKER x 1.10, UNCLAMPED. The clamp at 1.0 is DELETED, and it was never the reason the
+  lift was weak: a multiply on an sRGB-encoded bright colour is compressed to nothing.
+  Verde at 1.06 moves byte 188 -> 194; at 1.10, 188 -> 196. Four percent. It exists so
+  the stickers move with the grout rather than looking dead beside it. It is not the
+  signal.
+~~~
+
+~~~ grab-timing
+touch-down   ring 0 -> 0.62 over 50ms LINEAR (not ease-out: its slow start is the enemy
+             of "it registered now"). Full at 50ms, inside the 60ms budget.
+engage       ring out, seam in, over 80ms LINEAR, and the layer lift ramps with it.
+release      all -> 0 over 120ms.
+reduced motion: on and off instantly. This is an accessibility affordance, like the
+             sound, not a thing to reduce.
+~~~
+
+The seam is not decoration. It is the app's only affirmative marker for which layer is
+under your thumb, on a surface with no haptics. **It must never be conditional.**
 
 ### Following the thumb
 
@@ -164,47 +231,80 @@ This is the single most important feel decision in the app; if it is wrong, noth
 matters.
 
 ~~~ turn-follow
-gain: 90deg per   1.06 * S * max(0.62, |t|)   px of drag along the layer's screen tangent.
-  S is from the camera block. |t| is the SCREEN-PROJECTED LENGTH of that unit tangent --
-  1.0 when the tangent lies in the screen plane, 0 when it points at the camera. Read it
-  off the same projection that resolves the axis, before that vector is normalised.
-  At the default pose |t| ~ 0.91, so a quarter turn is ~61px on the reference device: the
-  same drag the old "0.42 x on-screen edge length" rule produced there.
-  The 0.62 floor is a guard. A face turned nearly edge-on has |t| -> 0 and an uncompensated
-  1:1 gain explodes; the clamped orbit could not reach that pose, a free one can. Worst
-  case is now 41px per quarter turn -- brisk, never wild.
-  DELETE screenEdgeLength(). It measures one specific world edge, which under free rotation
+gain: 90deg per  0.90 * S * max(0.68, |t|)  px of drag along the layer's screen tangent,
+  measured from the ENGAGE POINT, not from touch-down.
+  S is from the camera block. |t| is the SCREEN-PROJECTED LENGTH of the unit tangent --
+  1.0 in the screen plane, 0 pointing at the camera. Read it off the same projection that
+  resolves the axis, before that vector is normalised.
+  At f_rest on the reference device a quarter turn is ~42px and the total stroke to
+  commit is ~25px, about a sixth of the cube's on-screen face width, against a physical
+  finger trick's fifth. Slightly lighter than the physical reference, which is right for
+  a surface with no purchase and no springs.
+  The 0.68 floor guards a near-edge-on face, where |t| -> 0 and an uncompensated gain
+  explodes. It went UP as the gain came down, to hold the worst case where it was.
+clamp: +/-90deg of live rotation. A drag commits at most one quarter.
+
+ENGAGE, at 10px of travel from touch-down:
+  The axis resolves from the RECENT drag vector -- current position minus the earliest
+  pointer sample within the last 45ms, falling back to (current - touch-down) if fewer
+  than two samples exist. Measuring from touch-down sums the thumb-roll into the stroke
+  and is why 8px picked the wrong axis: a contact patch rolls further than the stroke
+  has travelled.
+  The turn's ORIGIN is that sample's position. The 10px is SPENT, not banked, so the
+  layer starts at exactly 0deg and never pops. It also puts engage 2px clear of
+  TAP_MAX_PX, so a tap can never engage a turn.
+
+PROVISIONAL, until the live angle reaches 20deg or travel from touch-down reaches 26px:
+  Re-score both candidates every move against the cumulative drag from the engage point.
+  SWITCH if |score_challenger| >= 1.35 * |score_incumbent|. On a switch the old layer
+  zeroes the same frame, the new layer takes the same origin, and no tick plays.
+  1.35 is a ~7deg band past the bisector for tangents 75deg apart: an unambiguous
+  correction, not a wobble. Both gates are needed -- the degree gate governs a normal
+  stroke, the pixel gate governs a stroke running nearly perpendicular to the tangent
+  where the angle would barely grow. Both close well below the commit point, so a switch
+  can never take back something that looked committed.
+  After the window, the axis is locked hard for the rest of the gesture.
+
+DELETE screenEdgeLength(). It measures one specific world edge, which under free rotation
   can point straight at the camera and project to zero pixels.
-clamp: +/-180deg of live rotation
-axis resolution: a sticker gives exactly two valid tangents; take the one with the larger
-  projection of the first 8px of travel, then lock it for the rest of the gesture
 ~~~
 
-**The detent.** Crossing a 45° boundary — the moment the nearest quarter turn changes — is
-the "you feel it decide which way it wants to snap" moment. It plays a **tick**: 8ms,
-bandpassed noise at 3.1kHz, −26 dBFS. Nothing visual. It is very quiet and it is the
-difference between dragging a shape and turning a mechanism.
+**The detent.** The tick fires at the COMMIT boundary, not at the rounding boundary. It
+means "past this, releasing turns the layer," which is the only mid-gesture information
+worth having on a device with no haptics, and it is what teaches the threshold. It ticked
+at 45° when 45° was also where a turn committed; at a 0.35 commit it would fire 13.5°
+after the turn became inevitable, which is feedback about a rounding operation.
+
+~~~ detent
+fires at +/-31.5deg away from zero; re-arms at +/-24.0deg returning toward zero.
+7.5deg of hysteresis, so a wobble at the boundary cannot chatter.
+Sound unchanged: 8ms bandpassed noise at 3.1kHz, -26 dBFS. Nothing visual.
+A refusal asymptotes to 5deg, so it never ticks. Correct: nothing will commit.
+~~~
 
 ### The snap
 
-On release, two paths:
-
-- **Flick** — release angular velocity ≥ 900°/s: fire to the next quarter turn *in the
-  direction of travel*, even if the layer has moved less than 45°.
-- **Settle** — below 900°/s: go to the nearest 90° multiple.
-
-Either way the animation is the same spring, and the release velocity is passed into it as
-initial velocity — that is what makes a flick feel like a flick rather than like a
-command.
-
 ~~~ turn-snap
-spring: { type: "spring", stiffness: 520, damping: 26, mass: 0.55, velocity: <release rad/s> }
-  natural frequency 30.7 rad/s, damping ratio 0.77
-  => 2.3% overshoot (about 2.1deg on a 90deg carry), settles in ~170ms, no second bounce
+Release velocity is ANGULAR velocity over the last 60ms of samples, never a single frame
+delta. On iOS the last pointermove before a lift is a decelerating sample, so single-frame
+sampling read near zero and the flick branch never fired on device at all.
+Fewer than two samples in the window -> velocity 0 -> settle.
 
-CSS fallback where a spring is not available:
-  duration: 110ms + (|delta| / 90deg) * 100ms, clamped [110ms, 210ms]
-  easing:   cubic-bezier(0.18, 0.92, 0.22, 1.055)
+Flick   -- |velocity| >= 520deg/s AND |angle| >= 8deg: fire to the next quarter in the
+           direction of travel. 520deg/s is ~243px/s at rest, above what a thumb
+           decelerating into a lift comes off at and below a quick swipe. Going much
+           lower is its own failure: nearly every release becomes a flick and the settle
+           branch stops existing. The 8deg floor stops a fast release at 2deg committing
+           a whole quarter.
+Settle  -- otherwise, commit if |angle| >= 0.35 of a quarter (31.5deg), else return to 0.
+
+Either way, held to a single quarter, and the release velocity is passed into the spring.
+
+spring: { stiffness: 580, damping: 26.5, mass: 0.52, velocity: <release rad/s> }
+  natural frequency 33.40 rad/s, damping ratio 0.763
+  => 2.46% overshoot (1.44deg on a 58.5deg carry), settles in ~157ms, no second bounce
+  Tightened because a commit now starts from 31.5deg rather than 45, so the spring
+  carries 30% further -- keeping the clock the same is what stops chained turns queueing.
 ~~~
 
 2.3% overshoot is the number that reads as *plastic*. Critically damped reads as software;
@@ -346,14 +446,83 @@ and more diagrammatic, zoomed in more like an object in your hand. That is a pro
 keep, not a defect to correct.
 ~~~
 
-**Two fingers, always.** At f_max the cube fills the stage and there is no background left
-to grab, so background-only orbit would strand the user at exactly the zoom where they most
-need to turn it. With two pointers down, the midpoint's translation orbits at the trackball
-gain and the span's ratio zooms, **simultaneously** — the standard map gesture, so orbit is
-reachable at any zoom, over any pixel. Re-baseline midpoint and span at the instant the
-second finger lands, so upgrading from a one-finger orbit is seamless. A second finger
-arriving during a live *turn* is ignored outright: the turn owns the gesture until the
-first finger lifts. Predictable beats clever, and a surprise commit is unforgivable here.
+**Two fingers, always — three channels, no arbitration.** At f_max the cube fills the
+stage and there is no background left to grab, so background-only orbit would strand the
+user at exactly the zoom where they most need to turn it. With two pointers down, the
+midpoint's translation orbits at the trackball gain, the span's ratio zooms, and the
+relative twist rolls, all **simultaneously** and each with its own engage state.
+Re-baseline all three at the instant the pointer count changes.
+
+Do not arbitrate between them. Picking "the one gesture the user means" is what makes a
+gesture feel like it is guessing, and it reproduces "it turned a face I did not intend"
+one level up.
+
+~~~ twist-roll
+engage:  9deg of relative twist. A phone pinch leaks 3-6deg of incidental rotation over
+         its course; 9 is above that and below anything anyone would call a deliberate
+         twist.
+deadzone SPENT, not banked: roll = twist - sign(twist) * 9deg. No jump at engage, and the
+         sign is frozen at engage so twisting back through zero cannot flip it.
+follow:  1:1, no smoothing. The fingers are describing the rotation.
+axis:    world +z (the camera never rotates, so the screen normal IS +z).
+         q <- Rz(-dTheta_screen) * q, composed on the LEFT, renormalised every frame.
+         The sign flips because screen angle grows clockwise and +z is counter-clockwise
+         from the camera.
+NO momentum. Roll stops when the fingers stop, like the zoom. The trackball coasts
+  because a flicked cube spins; a twist is a grip adjustment, not a throw.
+NO clamp, no snap, no settle. Silent.
+~~~
+
+**Recorded beside the decision: the position this supersedes.** On 2026-08-26 design
+declined twist-to-roll on two grounds. Information: a cube has 24 identical orientations
+and no canonical up, the one-finger trackball already reaches every one of them, so twist
+is a second path to a destination already reachable. Leakage: a two-finger grip maps three
+degrees of freedom onto one hand, so every pinch injects unrequested roll, and a cube that
+quietly tilts whenever you zoom is worse than one that never rolls.
+
+The first ground was wrong. It weighed DIRECTNESS at zero — one grip instead of two drags
+— and, worse, without twist a grip that naturally rotates produces nothing for that
+component, which reads as the gesture being half-ignored. The second ground survives and
+is exactly why the 9deg deadzone exists and is spent rather than banked.
+
+**A second finger during a live turn promotes to the pinch, and promotion can only ever
+CANCEL.** Ignoring it fails the need that two fingers work everywhere, and "everywhere
+except during a turn" is a rule nobody can hold. Tearing the turn down instantly is worse:
+an accidental brush discards a live turn with a visual snap-back and no explanation, which
+reads exactly like the app refusing. What survives of "a surprise commit is unforgivable"
+is the load-bearing half.
+
+~~~ turn-interrupted
+Second finger down during a live turn:
+  target 0deg, ALWAYS, whatever the live angle was -- even at 85deg. It never commits.
+  return on the refuse spring { stiffness: 700, damping: 34, mass: 0.5 }
+    -> damping ratio 0.91, ~130ms, no bounce.
+  SILENT. No clack (the puzzle did not change) and no thunk (nothing was refused).
+  The grab acknowledgement clears over the same window -- that is the visible explanation
+    the instant teardown lacked.
+  The pinch baselines centroid, span and twist on the same frame.
+
+Second finger down during the SNAP spring (post-release): the turn LANDS and commits. The
+  release already expressed the intent to commit; do not take it back.
+~~~
+
+**Any pointerdown lands a running turn and stops a running view change.** The old
+`if (animating) return` swallowed every touch for the ~160ms the spring ran, so turning at
+speed silently lost every second turn, and it blocked the 260ms view reset the same way.
+
+~~~ interrupt
+animation kind 'turn' -> LAND IT. Set the layer to its target this frame and commit, then
+  process the new touch. Instant, not eased: the new touch is about to raycast, and a
+  raycast against a layer 70% through a rotation returns a cubie at a position that will
+  have moved. It reads as fast, not broken, and it is the same valve "any pointerdown
+  kills momentum" already establishes.
+  The commit reaches the renderer through React, so the cubie transforms are the
+  PRE-commit ones for the rest of that tick. The touch therefore holds its raycast over
+  to its first move event, measuring from where the finger landed.
+animation kind 'view' -> STOP IT WHERE IT IS (the double-tap slerp, the zoom settle). A
+  view change carries no logical commitment, so completing it would be the app moving the
+  cube after you touched it.
+~~~
 
 **Getting home.** With no snap there is no implicit reset, so there is an explicit one —
 double tap, placed directly on the thing it controls, which is the strongest proximity
@@ -362,7 +531,7 @@ available and costs the stage no chrome.
 ~~~ view-reset
 Double tap anywhere in the stage -- on the cube or on the background, since at f_max there
 is no background. A "tap" is pointerdown to pointerup within 220ms and under 8px of travel,
-which is below the axis-lock threshold, so a tap can never have committed a turn. Two of
+which is below the 10px engage threshold, so a tap can never have committed a turn. Two of
 them, the second beginning within 280ms of the first ending.
   -> quaternion SLERP to q_default and lerp f to 0.55, both over 260ms
      cubic-bezier(0.16, 1, 0.3, 1). Shortest arc. Silent.
@@ -370,14 +539,20 @@ them, the second beginning within 280ms of the first ending.
   the end state."
 ~~~
 
-It is taught twice rather than given a control, because a control here would be the only
-action row in a sheet of destinations and the only chrome ever added to the stage. First,
-the first-run overlay gains a third line, beside the two it already carries about dragging
-a sticker and dragging the background. Second, once per session, the first time the view
-is rotated past 90deg or zoomed past 10% **while the clock is idle**, the notation strip's
-reserved slot carries a one-line hint for 1400ms -- the refusal message's slot, timing and
-treatment exactly. No new chrome, no layout shift, never during a running solve. (Both
-lines are voice-writer's.)
+It is taught **once**, rather than given a control, because a control here would be the
+only action row in a sheet of destinations and the only chrome ever added to the stage.
+Once per session, the first time the view is rotated past 90deg or zoomed past 10% **while
+the clock is idle**, the notation strip's reserved slot carries a one-line hint for 1400ms
+-- the refusal message's slot, timing and treatment exactly, but silent and not marked as
+a refusal, because nothing was blocked. No new chrome, no layout shift, never during a
+running solve.
+
+This spec originally taught it twice, adding a line to the first-run overlay as well.
+Voice-writer took that line back on 2026-08-28 and was right to: a card that dismisses at
+first touch would be teaching how to undo something the user has not yet done, which is a
+fact with no purchase at the moment it is given. The overlay's third line went to the
+two-finger gesture instead, which is the thing a user actually reported being unable to
+find.
 
 The reset is a convenience, not a recovery: the cube is never *stuck*, only in a pose you
 did not want, and one drag always fixes that. That is why it does not earn chrome.
@@ -393,11 +568,14 @@ with genuinely no shading answer is dead face-on, where a single face fills the 
 and the cube reads flat — and that one is self-correcting, because it is also the pose you
 can see least of and the first thing anyone does is turn it back.
 
-One consequence to hold: the grab acknowledgement lifts stickers to `k × 1.06` **clamped at
-1.0**, so a layer grabbed on the up face gets no lift at all. Free rotation makes any face
-reachable as the up face, so that hole is now common rather than rare. **The 1px hairline
-tracing the layer boundary is therefore the load-bearing acknowledgement and must never be
-conditional.** With no haptics it is the only proof the touch registered.
+One consequence to hold, and the reason the acknowledgement was rebuilt: the original
+treatment lifted stickers to `k × 1.06` **clamped at 1.0**, so a layer grabbed on the up
+face got no lift at all, and free rotation makes any face reachable as the up face. The
+clamp was never the real problem though — a multiply on an sRGB-encoded bright colour is
+compressed to nothing either way. The lift moved to the body, which has real headroom and
+is also the grout between stickers, so lifting it draws the grabbed layer's grid.
+**The seam is the load-bearing acknowledgement and must never be conditional.** With no
+haptics it is the only proof the touch registered.
 
 ### Undo
 
@@ -607,60 +785,56 @@ a colorblind viewer and a glance.
 
 The app's mark is a 3×3 grid of squares whose **top row is offset by a quarter turn** —
 the atomic unit the app is named for, frozen. It is drawn as SVG in-app (menu head,
-settings, empty states); only the home-screen icon is generated.
+settings, empty states) and as the browser-tab favicon.
 
 **iOS copies the home-screen icon once, at install, and never re-reads it.** The final icon
 ships before anyone installs, or changing it later means deleting and re-adding the app.
 
-App icon — `icon-1024.png`, 1024×1024
+### The tile is drawn, not generated, and it is not the mark
 
-```
-A 3D icon of a Rubik's-style cube frozen mid-turn, filling a full bleed square
-composition with no padding or margin, on a pure black background. The cube's entire top
-layer is twisted forty-five degrees out of alignment with the two layers beneath it: at
-each of the top layer's four corners a small triangular notch cuts into the outline and
-reveals near-black plastic underneath, and the outer edge of the object is a stepped,
-notched silhouette, never a plain straight-sided box. The cube is centered with identical
-black margin on all four sides -- left, right, top and bottom the same width -- occupying
-the central eighty percent of the frame on both axes. Seen in a three-quarter view tilted
-so the top face and two side faces are visible. Most of the top face and the two visible side faces read as
-large, coherent blocks of a single color each -- a cube that is almost solved -- except at
-the twisted seam where the offset layer's stickers show a scattering of two or three other
-colors breaking the pattern, the way a real cube looks caught mid-turn rather than fully
-mixed. Every small square sticker is a flat, fully saturated block of pure color with hard
-square corners, no gloss, no reflection, no highlight, no bevel: a cool pale grey-white
-(never cream, never yellow), a warm muted gold rather than lemon yellow, a true spring
-green leaning cool rather than olive or lime, a clear mid-value blue that is a true blue
-and not violet or indigo, a bright tangerine orange, and a deep crimson red leaning
-slightly toward magenta rather than fire-engine red. The gaps between squares are near-black graphite.
-Lighting is flat and graphic: top faces brightest, side faces one step darker, no
-gradients, no shadow. Centered, symmetrical, high contrast.
-```
+App icon — `icon-cube.png`, 1024×1024, full bleed, produced by
+`dist/scripts/render-icon.mjs`.
 
-This brief was rewritten on 2026-08-26 after the first generation failed the image gate.
-Two lessons are baked into the wording above and should not be edited back out. The
-offset top layer is described by its **visible geometric result** -- corner notches, a
-stepped silhouette -- because stating the instruction abstractly produced a flush, solved
-cube with a cosmetic colour stripe standing in for the offset. And each hue is stated as a
-relationship *against the generic version it drifted to*, with the near-white called out
-explicitly, because it vanished entirely on the first attempt.
+A solved 3×3×3 cube in three-quarter view at the app's own resting pose — Ry(-45) then
+Rx(+24), so the white face is on top, green on the screen left and red on the screen
+right. Nine evenly sized square stickers to a face, each inset within near-black graphite
+plastic, with a hairline of pure black between cubies. Flat and graphic: no gloss, no
+bevel, no shadow, no gradient within a sticker.
 
-A third revision followed the second generation. The faces now read as mostly-coherent
-blocks rather than a full scramble: a fully scrambled cube dissolves into a colourless
-mosaic at 48px, and the notched silhouette this brief works so hard to get is not
-perceptible at that size anyway, so the scramble was pure noise on top of a geometry win
-it could not preserve. The blue lost its "faint violet cast" instruction, which overshot
-into an actually-violet blue.
+~~~ icon-geometry
+Every number is the app's own, restated as a literal because a standalone node script
+cannot import the TypeScript, and asserted against the source in
+`dist/web/cube/icon-master.test.ts`:
+  cubie 0.98 at spacing 1.0, sticker inset 0.06, camera FOV 28 at distance 18
+  colour: the Cardinal faces, put through the SHADE ramp; plastic through SHADE_BODY
+  the ramp multiplies in LINEAR light, exactly as applyShading does, because three.js
+    holds colour in linear working space -- multiplying the sRGB bytes instead lands a
+    few points off and desaturates
+full bleed: the cube fills the frame. The safe zone is applied by normalize-icon.mjs,
+  not here, and a master carrying its own margin would be inset twice.
+~~~
 
-**Two defects in the render are NOT the brief's to fix and must not be prompted at.**
-The provider returns real alpha even when opaque is requested, and it does not reliably
-centre to an even margin. Both are corrected deterministically after generation by
-`bin/flatten-icon.mjs`, because two attempts differing on transparency with identical
-transparency requests is provider non-determinism, not something prose controls.
+**Why this stopped being a generated asset.** Three generations of `gpt-image-2` failed,
+each differently, and the third shipped: a top layer of four unevenly sized cubies
+floating over a 3×3 cube. Every failure was the same instruction — the top layer twisted
+45 degrees out of alignment, described by its visible geometric result after the first
+attempt produced a flush cube with a painted-on stripe. The brief was rewritten three
+times and never moved it, because the brief was never the problem: that geometry is the
+part a model cannot build.
+
+So the tile is no longer the mark. The offset stays where it works — the in-app `Mark`
+and the favicon, both drawn in code, both exact at any size. The tile is a portrait of
+the cube the app actually renders, which is a thing that can be drawn exactly, and being
+recognisably a Rubik's cube at 48px is worth more on a home screen than being a clever
+logo nobody can resolve.
 
 Derive `icon-192.png`, `icon-512.png`, `icon-512-maskable.png` and
-`apple-touch-icon-180.png` from the 1024 master; the 80% safe zone in the brief is what
-makes the maskable crop survive. The iOS launch image is the same SVG mark centered on
+`apple-touch-icon-180.png` from the master with `dist/scripts/normalize-icon.mjs`, which
+also writes them to the served directory. The plain variants take the 80% safe zone; the
+**maskable takes 0.56**, because Android's maskable safe zone is a circle of 80%
+*diameter* and an 80% *bounding box* puts a square subject's corners exactly on the crop.
+The two 512s used to be byte-identical, which was the tell: the maskable variant had no
+protection the plain one lacked. The iOS launch image is the same SVG mark centered on
 `#000000` — generated in code, not by a model.
 
 ## The five-second test

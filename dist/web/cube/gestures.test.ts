@@ -169,3 +169,44 @@ describe('resolving which layer a drag grabbed', () => {
     expect(alongTangent).toBeGreaterThan(0);
   });
 });
+
+// A sticker offers exactly two candidate axes. Their screen tangents are not square --
+// on this projection they sit roughly 60 degrees apart -- so there is always a drag
+// direction that scores both almost equally, and picking the larger one there is a coin
+// flip. `confidence` is what lets the gesture layer refuse to flip that coin.
+describe('how decisively a drag picked its axis', () => {
+  const coords: Vec3 = [1, -1, 1];
+  const normal: Vec3 = [0, 0, 1];
+
+  /** Every drag direction, and how decisively each one chose. */
+  const sweep = () => {
+    const out: { deg: number; confidence: number; base: TurnBase }[] = [];
+    for (let deg = 0; deg < 360; deg += 1) {
+      const rad = (deg * Math.PI) / 180;
+      const r = resolveAxis(mockRenderer(coords), 0, normal, Math.cos(rad) * 60, Math.sin(rad) * 60);
+      if (r) out.push({ deg, confidence: r.confidence, base: r.base });
+    }
+    return out;
+  };
+
+  it('is decisive for a drag straight along one of the tangents', () => {
+    const best = sweep().reduce((a, b) => (a.confidence > b.confidence ? a : b));
+    expect(best.confidence).toBeGreaterThan(4);
+  });
+
+  it('is a near tie for a drag aimed between them, and that tie really exists', () => {
+    const worst = sweep().reduce((a, b) => (a.confidence < b.confidence ? a : b));
+    // Under AXIS_MARGIN, which is what makes waiting rather than guessing worth doing.
+    expect(worst.confidence).toBeLessThan(1.25);
+    expect(worst.confidence).toBeGreaterThan(0.9);
+  });
+
+  it('reports the crossover between the two candidates as a tie, not as decisive', () => {
+    // The winner swaps somewhere in the sweep. Confidence has to dip toward 1 exactly
+    // there, or the margin would never trip on the drags that need it most.
+    const all = sweep();
+    const flips = all.filter((p, i) => i > 0 && all[i - 1].base !== p.base);
+    expect(flips.length).toBeGreaterThan(0);
+    for (const f of flips) expect(f.confidence).toBeLessThan(1.25);
+  });
+});

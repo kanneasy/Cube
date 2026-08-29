@@ -27,6 +27,9 @@ export interface SolveController {
   serial: number;
   /** Set when a turn was refused, for the notation strip to announce. Clears itself. */
   refusal: string | null;
+  /** The same slot, without the thunk or the refusal styling. Clears itself. */
+  hint: string | null;
+  announceHint: (message: string) => void;
   scrambling: boolean;
   hintPending: boolean;
   dispatch: (action: Action) => void;
@@ -48,10 +51,12 @@ export function useSolve(
   const [, force] = useReducer((n: number) => n + 1, 0);
   const sessionRef = useRef<Session>(startSession({ mode: initialMode, goal: { kind: 'solved' }, scramble: '' }));
   const [refusal, setRefusal] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
   const [scrambling, setScrambling] = useState(true);
   const [hintPending, setHintPending] = useState(false);
   const [serial, setSerial] = useState(0);
   const refusalTimer = useRef<number | undefined>(undefined);
+  const hintTimer = useRef<number | undefined>(undefined);
   const cancelIntro = useRef<(() => void) | null>(null);
   const cancelUndo = useRef<(() => void) | null>(null);
   // One planner for the life of the component; reset on every new scramble.
@@ -66,6 +71,19 @@ export function useSolve(
     },
     [audio],
   );
+
+  /**
+   * A transient line in the notation strip that is NOT a refusal.
+   *
+   * Same slot, same 1400ms, same treatment -- deliberately, because a second transient
+   * mechanism would be new chrome on a stage that has none. But silent, and without the
+   * refusal's styling: nothing was blocked, and a thunk would say it was.
+   */
+  const announceHint = useCallback((message: string) => {
+    setHint(message);
+    window.clearTimeout(hintTimer.current);
+    hintTimer.current = window.setTimeout(() => setHint(null), REFUSAL_MS);
+  }, []);
 
   const dispatch = useCallback(
     (action: Action) => {
@@ -189,6 +207,7 @@ export function useSolve(
   useEffect(
     () => () => {
       window.clearTimeout(refusalTimer.current);
+      window.clearTimeout(hintTimer.current);
       cancelIntro.current?.();
       cancelUndo.current?.();
     },
@@ -214,6 +233,8 @@ export function useSolve(
     session: sessionRef.current,
     serial,
     refusal,
+    hint,
+    announceHint,
     scrambling,
     hintPending,
     dispatch: dispatchWithIntroCancel,

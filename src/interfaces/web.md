@@ -103,13 +103,37 @@ as on-screen text would be narrating a sound that's doing its job.
 
 **Refusals.** Full set and trigger mapping in `voice.md`.
 
-**First-run overlay.** Two lines, dismisses on the first touch — which is also the
+**First-run overlay.** Three lines, dismisses on the first touch — which is also the
 user's first real drag, so the lesson and the action are the same motion:
 
 ~~~ first-run
 Drag a sticker to turn that layer.
 Drag the background to look around.
+Two fingers zoom and look around, even on the cube.
 ~~~
+
+Line three repeats line two's "look around" rather than reaching for a synonym: it is the
+same action reached a second way, and saying so is the teaching. "even on the cube" is the
+fact a user's own report proved was missing — zoomed in there is no background left to
+grab, which is exactly where turning it matters most. Two fingers also roll the cube, and
+that is deliberately not taught here: it is a safe, reversible refinement of a gesture the
+line already teaches, discovered by twisting a little further, not a fourth law to hand
+someone before they have touched anything.
+
+The view reset is **not** on this card. A card that dismisses at first touch would be
+teaching how to undo something the user has not yet done, which is a fact with no
+purchase at the moment it is given.
+
+~~~ view-reset-hint
+DOUBLE TAP TO RESET
+~~~
+
+It fires instead in the notation strip's reserved slot — the refusal's slot, timing and
+treatment exactly, but silent and not marked as a refusal, because nothing was blocked.
+Once per session, the first time the view has actually drifted past 90° or 10% of zoom
+while the clock is idle. "RESET" rather than "RESET VIEW" or "RESET HOME": this app
+already uses Home to mean the iOS Home Screen, and nothing else on screen while the clock
+is idle is plausibly the thing being reset.
 
 ## Mode sheet
 
@@ -128,7 +152,7 @@ actually judged.
 
 ## Menu sheet
 
-Title `Menu`. Four rows, the app's four destinations:
+Title `Menu`. Five rows, the app's five destinations:
 
 ~~~ menu-sheet
 Records
@@ -140,9 +164,50 @@ Today's scramble, and yesterday's best.
 Patterns
 Checkerboard, cube in a cube, superflip.
 
+Controls
+Turn, look around, two fingers, reset.
+
 Settings
 Palette, sound, timer mode, about.
 ~~~
+
+Every blurb on this list previews the destination's **own row names**, lowercased and
+comma-joined, rather than summarising it. That is what makes the menu searchable by eye
+rather than by reading, and it is why `Controls` reads as a list and not as a sentence.
+
+## Controls sheet
+
+Title `Controls`. The durable reference for the gestures, and the answer to a real
+report: a user asked for two-finger zoom and rotate for a gesture that already worked and
+that they could not find. The first-run card is the right carrier for someone already
+dragging correctly, but it is gone after one gesture and there was nowhere to go and
+look — the menu and About cover rules and scoring and never mentioned controls.
+
+~~~ controls-sheet
+TURN
+Drag a sticker to turn its layer, one quarter at a time.
+
+LOOK AROUND
+Drag the background to look around the cube. Flick it and it keeps spinning.
+
+TWO FINGERS
+Pinch to zoom, drag to look around, and twist to roll — anywhere, even on the cube.
+
+RESET
+Double tap anywhere to snap the view back to center, zoom included — it's never logged
+as a move.
+~~~
+
+A deeper register than the first-run card, deliberately. The card catches a thumb
+mid-motion and teaches the next second; this is opened by someone who already failed to
+find something once and has attention to spend. Same facts, one layer down: the
+quarter-turn limit, the momentum, and that a reset is never charged as a move.
+
+The roll gesture is taught **here and not on the card**. On a card that flashes once,
+teaching roll hands someone a fourth rule before they have touched anything; on a
+reference someone opened deliberately, omitting it is a gap in the manual.
+
+Rows here do not navigate, so they are not buttons.
 
 ## Records sheet
 

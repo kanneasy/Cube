@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CubeRenderer } from './cube/renderer';
+import { CubeRenderer, ZOOM_REST, defaultOrientation } from './cube/renderer';
 import { CubeGestures } from './cube/gestures';
 import { CubeAudio } from './cube/audio';
 import { PALETTES, type PaletteId } from './cube/palette';
@@ -14,7 +14,7 @@ import type { StageSplits } from '../solve/stages';
 import { HoldZone } from './components/HoldZone';
 import { Inspection } from './components/Inspection';
 import { Sheets } from './components/Sheets';
-import { BROWSER_TAB_NOTICE, FIRST_RUN } from './components/copy';
+import { BROWSER_TAB_NOTICE, FIRST_RUN, VIEW_RESET_HINT } from './components/copy';
 import { UpdatePrompt } from './components/UpdatePrompt';
 
 /** Remembered so the notice is genuinely one-time rather than shown every launch. */
@@ -103,20 +103,77 @@ export function App() {
     rendererRef.current = renderer;
     const audio = audioRef.current;
 
+    // Taught once per session, the first time the view has actually drifted, and only
+    // while the clock is idle. The reset used to be a line on the first-run card, which
+    // teaches how to undo something the user has not done yet; here the lesson arrives
+    // at the moment it means something. `visual.md` has specified this trigger since the
+    // original spec and it was never built.
+    /**
+     * The card retires on a gesture the user actually performed, not on contact.
+     *
+     * It briefly retired on `onTouchCubie` -- any finger touching the cube at all -- so
+     * a curious tap that never became a drag permanently destroyed the only surface
+     * teaching the controls, in the same motion that was supposed to teach them. The
+     * spec's "dismisses on the first touch" has always meant the first real DRAG: "the
+     * lesson and the action are the same motion". A tap is not that motion.
+     *
+     * Turning a layer and moving the view both count, because the card teaches both.
+     */
+    // Latched, because onViewMoved fires on every pointermove of an orbit or pinch. Left
+    // unguarded this was a synchronous localStorage write at gesture frequency, for the
+    // life of the app, in the one path this file works hardest to keep cheap -- the whole
+    // design of the gesture layer is raycast once, mutate only what is needed, and leave
+    // the rest to the frame. It cost nothing while it hung off onTouchCubie, once per
+    // finger-down; moving it here is what turned it into a per-frame call.
+    let firstRunRetired = false;
+    const retireFirstRun = (): void => {
+      if (firstRunRetired) return;
+      firstRunRetired = true;
+      setFirstRunSeen(true);
+      writeFlag(FIRST_RUN_KEY);
+    };
+
+    let resetHinted = false;
+    const maybeHintReset = (): void => {
+      if (resetHinted) return;
+      const solve = solveRef.current;
+      if (solve.session.phase.kind !== 'ready' || solve.scrambling) return;
+      // Shortest-arc angle between the current pose and home. 2*acos(|w|) of the relative
+      // quaternion, absolute so q and -q read the same.
+      const drift = 2 * Math.acos(Math.min(1, Math.abs(renderer.orientationQuaternion().dot(defaultOrientation()))));
+      const zoomed = Math.abs(renderer.getZoom() / ZOOM_REST - 1) > 0.1;
+      if (drift <= Math.PI / 2 && !zoomed) return;
+      resetHinted = true;
+      solve.announceHint(VIEW_RESET_HINT);
+    };
+
     const gestures = new CubeGestures(renderer, {
-      onGrab: () => {
+      // Moved off onGrab, which needs travel to fire. This is earlier in every case and
+      // is what puts the acknowledgement inside its 60ms budget.
+      onTouchCubie: (cubieIndex) => {
+        renderer.setTouched(cubieIndex);
         audio.unlock();
-        setFirstRunSeen(true);
-        writeFlag(FIRST_RUN_KEY);
       },
-      onRelease: () => {},
+      onGrab: (base) => {
+        renderer.setGrabbed(base);
+        retireFirstRun();
+      },
+      onAxisSwitch: (base) => renderer.setGrabbed(base),
+      onViewMoved: () => {
+        retireFirstRun();
+        maybeHintReset();
+      },
+      onRelease: () => renderer.clearGrab(),
       onDetent: () => audio.tick(),
       onSnapStart: (settleMs) => {
         // Fired while the layer is still moving: 70ms in it is about three-quarters
         // home, which is perceptually the moment it seats.
         window.setTimeout(() => audio.clack(), Math.min(70, settleMs * 0.6));
       },
-      onCommit: (move) => solveRef.current.dispatch({ type: 'turn', move, at: performance.now() }),
+      onCommit: (move) => {
+        renderer.clearGrab();
+        solveRef.current.dispatch({ type: 'turn', move, at: performance.now() });
+      },
     });
 
     const onResize = () => renderer.resize();
@@ -391,10 +448,20 @@ export function App() {
       <div
         className="notation gutter"
         data-refused={solve.refusal !== null}
-        data-mode={solve.refusal !== null ? 'refusal' : session.log.length === 0 ? 'scramble' : 'log'}
+        data-mode={
+          solve.refusal !== null
+            ? 'refusal'
+            : solve.hint !== null
+              ? 'hint'
+              : session.log.length === 0
+                ? 'scramble'
+                : 'log'
+        }
       >
         {solve.refusal !== null ? (
           solve.refusal
+        ) : solve.hint !== null ? (
+          solve.hint
         ) : session.log.length === 0 ? (
           <>
             <span className="notation__label">SCRAMBLE</span>
