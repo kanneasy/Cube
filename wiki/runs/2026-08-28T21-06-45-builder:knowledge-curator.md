@@ -1,0 +1,52 @@
+# Run — builder:knowledge-curator — 2026-08-28T21:06:45.612Z
+
+Captured verbatim by the SubagentStop hook: the handoff Builder sent, and the agent's complete output (its `## Thinking` and `## Result`).
+
+## Handoff
+
+**Distill this session's lessons**
+
+Work only in /Users/erickanney/builder/projects/quarter-turn/.claude/worktrees/cube-rotation-face-controls-56433f (a git worktree; do not reach outside it).
+
+Distil what today's session learned into `wiki/learnings.md`, and propose anything kit-wide into `~/builder/.claude/knowledge/inbox/` as proposal files.
+
+**An important caveat about your usual sources.** `wiki/runs/` and `wiki/daily/` have NOTHING for today — the SubagentStop hook did not capture any of this session's specialist runs (it needs a session reload after kit changes, and this session did not get one). So the run logs you would normally read do not exist. Read `git log master..HEAD` and `git diff master...HEAD` instead; the commit messages were written to carry the reasoning deliberately, and the specialists' exact values and reasoning were captured verbatim into `src/interfaces/@brand/visual.md` and `src/interfaces/web.md` rather than paraphrased. That capture gap is itself worth a line somewhere.
+
+**What happened.** A user reported three things about the installed iPhone app: 3D rotation was hard and they wanted two fingers to zoom and rotate together; face turns rotated a layer they did not intend or turned slightly and sprang back, needing a hard deliberate swipe; and the app tile was a broken generated image. Twelve commits followed.
+
+**The findings I think are most likely to generalise — judge these yourself rather than take my framing:**
+
+1. **Measuring a gesture's direction from touch-down sums the thumb's contact-patch roll into the intended stroke.** That single choice produced the wrong-layer bug. Measuring over a recent time window instead drops the roll out. There is a test that resolves to the wrong layer with the old read and the right one with the new.
+2. **A threshold that is "banked" rather than "spent" makes the thing pop.** The engage travel used to accrue into the turn, so the layer jumped to a nonzero angle the instant it resolved. Design flagged the same trap in the twist deadzone before it was written.
+3. **A single-frame release velocity is wrong on iOS**, because the last pointermove before a lift is a decelerating sample. The codebase already knew this and had the fix applied to one gesture and not the other, with a comment explaining exactly why — and the unprotected one was the gesture that mattered most.
+4. **Deciding a gesture from "whichever two contacts the pointer map yields"** let a stray third finger jump-rotate the cube. Measured 76.7px of unrequested rotation.
+5. **Three image generations failed the same instruction** (a top layer twisted 45 degrees) and three brief rewrites did not move it. The thing was exactly specifiable, so drawing it deterministically was the answer, not a better prompt. This may be the most transferable lesson of the day.
+6. **A test harness's no-op `cancelAnimationFrame` surfaced two real robustness gaps** — a commit that could fire twice, and superseded springs that kept writing shared state.
+7. Two spec-versus-code contradictions had stood for months, and a required behaviour (the grab acknowledgement) sat in the spec unbuilt because its stated 60ms budget was unmeetable by construction — it was specified to fire at a moment that requires travel.
+
+Be selective. A lesson only earns its place if it would change what someone does next time. Prune anything in the existing `wiki/learnings.md` that today made wrong.
+
+## Agent output
+
+This reads well and holds together. Nothing existing needed pruning — none of the three original entries were made wrong by today's work, only extended.
+
+## Thinking
+
+The run-capture gap the task warned about was real: `wiki/runs/` and `wiki/daily/` stop at 2026-08-26, so I reconstructed today's session from `.git/worktrees/.../logs/HEAD` (Read tool, not Bash — this session has no Bash tool available, so I got commit subjects from the reflog rather than full `git log`/`git diff` output) plus the actual current state of `src/interfaces/@brand/visual.md` (read in full — extraordinarily detailed, MSFM-annotated capture of the gesture/render rework) and targeted greps into `dist/web/cube/gestures.ts`, `gestures.commit.test.ts`, and `renderer.ts` to ground each of the seven findings in real code before writing anything down. I verified, rather than took on faith: the recent-window axis fix (lines 46-51, 200-201), the spent-not-banked engage travel (lines 174-175, 785), the 60ms grab-acknowledgment contradiction (visual.md's own "Grabbing a layer" section, which states the old/new trigger explicitly), the third-finger guard (`pointers.size &gt; 2` return, plus the dated test comment naming the exact bug — "moved the cube twice over"), the idempotent `land()` guard and `springGeneration`/`superseded()` counters (both present in code), and the `caf: () =&gt; {}` no-op in the test harness. I did not find explicit corroboration for a *second* spec-vs-code contradiction beyond the 60ms one, so I kept finding #7 scoped to what I could verify rather than inventing a second instance.
+
+What I judged not to keep: I considered a kit proposal for finding #2 (banked-vs-spent thresholds) on its own, but on reflection it's a narrower restatement of the same "don't trust an endpoint/accrued sample" family as finding #1, and less crisp as an independent, generalizable bullet — I let it stay as evidence inside the project-level timing-budget entry instead of spending a second kit proposal on it. I also declined to write up the "delete the constants table nothing read" and "stop a curious tap destroying the card" commits as anything beyond what they are (cleanup and a UI polish fix) — neither carries a root-cause worth a durable note. I did not touch the three existing `learnings.md` entries' substance since nothing this session contradicted them; I only added a cross-reference where a new entry is genuinely the other half of an existing one (the `window.__quarterTurn` entry).
+
+For the image-generation lesson, I was honest in the proposal itself about routing uncertainty: `image-critique.md` sits under `~/builder/.claude/design/`, which CLAUDE.md's own description of `design-watch` explicitly says is *not* under `kit-review`'s line ("it does not cross kit-review's line"). I wrote the proposal anyway, flagged the uncertainty in its own `Target` field, and noted it in this Result rather than silently dropping a strong, concrete lesson because the pipeline's ownership boundary is ambiguous for it.
+
+## Result
+
+**Project wiki** — `/Users/erickanney/builder/projects/quarter-turn/.claude/worktrees/cube-rotation-face-controls-56433f/wiki/learnings.md`: kept the three existing entries verbatim (nothing today made them wrong), added a cross-reference between the `window.__quarterTurn` entry and its new counterpart, and added three new entries: gesture-feel bugs are found on a real device and then pinned by the suite (with a pointer to `gestures.ts`'s header/inline comments as the now-current gesture-model doc), this app's timing-budget annotations need a buildability check against the mechanism they name, and what to do when `wiki/daily/` looks stale despite real activity (check for a missed hook reload before assuming nothing happened).
+
+**Kit proposals** — `~/builder/.claude/knowledge/inbox/`:
+- `2026-08-28-quarter-turn-gesture-sampling-window.md` → `pitfalls/canvas.md`, new bullet: touch direction/velocity must be read from a recent sample window, not touch-down or a single final frame (contact-patch roll at the start, iOS deceleration at the end).
+- `2026-08-28-quarter-turn-multitouch-pointer-identity.md` → `pitfalls/canvas.md`, new bullet: pinch/rotate gestures must track two pinned pointer IDs and re-baseline silently on cardinality change, not derive from "whichever pointers are currently down" (measured 76.7px of stray rotation from an untracked third finger).
+- `2026-08-28-quarter-turn-fake-raf-cancel-noop.md` → `pitfalls/testing.md`, new bullet: a fake `cancelAnimationFrame` left as a no-op is what surfaces "superseded callback still fires" bugs — don't "fix" it to be faithful, fix the idempotency/generation guards it's exposing.
+- `2026-08-28-quarter-turn-image-gen-exact-geometry.md` → `~/builder/.claude/design/image-critique.md`, new bullet: when a generation defect is an exact, specifiable geometric relationship rather than a quality judgment, stop prompting and render it deterministically — flagged as possibly outside `kit-review`'s stated remit since that file isn't in the KB ceiling table.
+- `2026-08-28-quarter-turn-run-capture-reload-gap.md` → fold into `pitfalls/agent-workflow.md`'s existing worktree-symlink bullet: a missed session reload after a kit change produces the identical "empty `wiki/runs/`, no error" symptom as the already-documented symlink case, and the recovery (git log + verbatim spec capture) generalizes.
+
+**Environment note:** this session had no Bash tool available, so `git log`/`git diff` as literally requested weren't runnable; I substituted the worktree's raw `logs/HEAD` reflog (via Read) for commit subjects and grounded every technical claim directly in the current `dist/` code and the verbatim spec prose instead.

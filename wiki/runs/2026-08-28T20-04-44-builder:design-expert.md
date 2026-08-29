@@ -1,0 +1,555 @@
+# Run — builder:design-expert — 2026-08-28T20:04:44.869Z
+
+Captured verbatim by the SubagentStop hook: the handoff Builder sent, and the agent's complete output (its `## Thinking` and `## Result`).
+
+## Handoff
+
+**Tune the cube gesture feel**
+
+Work only in /Users/erickanney/builder/projects/quarter-turn/.claude/worktrees/cube-rotation-face-controls-56433f. This is the Quarter Turn project (a 3x3x3 Rubik's cube PWA for iPhone). Read the specs in `src/` yourself, especially `src/interfaces/@brand/visual.md` sections "Grabbing a layer" (around L145-157), the `~~~ turn-follow`, `~~~ turn-snap` and `~~~ trackball` / `~~~ zoom` annotation blocks, and "Orbiting and zooming the view" (L253-401). The gesture code is `dist/web/cube/gestures.ts` and `dist/web/cube/renderer.ts`.
+
+**The situation.** The user has been using the installed app on a real iPhone and reports three things about touch, in their own words:
+
+- "3d rotation of the cube is still challenging. I'd like to be able to use two fingers to zoom and rotate if necessary, sometimes at the same time."
+- "Moving the cube faces is challenging too. It's rotating a face I didn't intend or only slightly rotating and returning. I have to swipe very hard and deliberately in the exact direction I want to work, and it just slows down the movements."
+
+Investigation traced this to four mechanisms, which I am fixing structurally:
+
+(a) `if (this.animating) return` in `onDown` swallows every touch for the ~200ms the turn spring runs, so turning at speed silently loses every second turn.
+(b) The rotation axis resolves from the first `AXIS_LOCK_PX = 8` px of the stroke and then locks, with no margin between the two candidate axes. A thumb's contact patch rolls further than 8px before the stroke has a direction.
+(c) Turn release velocity is a single-frame delta, while the orbit uses a 60ms window. The comment on `VELOCITY_WINDOW_MS` explains exactly why that is wrong on iOS, but the guard was only ever applied to the orbit.
+(d) The grab acknowledgement your spec requires at visual.md:145-157 — the layer lifting to `k x 1.06` with a 1px `rgba(255,255,255,0.22)` hairline tracing its boundary within 60ms — was never built. `onGrab` fires and `App.tsx` only uses it to unlock audio. Your own spec calls that hairline "the only proof the touch registered" because iOS Safari has no haptics.
+
+**What I need from you.**
+
+1. **The feel numbers.** I have starting points and I want yours instead, with your reasoning. Currently: `TURN_GAIN = 1.06`, `TANGENT_FLOOR = 0.62`, `AXIS_LOCK_PX = 8`, `FLICK_RAD_PER_S = 900 deg/s`, commit is `Math.round(angle / 90deg)` so it needs a full 45 degrees, `LIVE_CLAMP = 90deg`, `TURN_SPRING = {stiffness: 520, damping: 26, mass: 0.55}`. My proposal: raise the axis lock to ~13px and add a disambiguation margin (lock only when the winning axis beats the runner-up by ~1.25x, forcing a decision by 30px); drop the flick threshold to ~400 deg/s once the velocity is windowed; commit at ~0.35 of a quarter instead of 0.5; and nudge `TURN_GAIN` to ~0.92. Push back where you disagree — you own this.
+
+2. **Two-finger twist-to-roll.** Two fingers already tumble (centroid translation) and zoom (span) simultaneously. The user is asking for "rotate", and on 2026-08-26 you declined twist-to-roll with "nothing to gain on an object with 24 identical orientations" (`wiki/runs/2026-08-26T20-36-03-builder:design-expert.md:48`). The user has now asked for it directly, so it is going in. Tell me how it should feel: engage threshold, whether it tracks 1:1, how it coexists with the simultaneous tumble and zoom, and whether anything about your original objection should shape the implementation. Restate your original position in your own words so I can record it in the spec beside the new decision.
+
+3. **The grab acknowledgement.** Give me the buildable treatment — exact lift factor, hairline colour and weight, easing and duration, what happens on release versus on commit, and whether the hairline should trace the layer's outer boundary or something else. The renderer uses flat `MeshBasicMaterial` with no lights, three.js, 26 cubie groups each with a `BoxGeometry` body and `PlaneGeometry` stickers.
+
+4. One more spec conflict to resolve: `visual.md` L353-356 says a second finger during a live turn is ignored, "the turn owns the gesture until the first finger lifts. Predictable beats clever, and a surprise commit is unforgivable." The code does the opposite — it tears the turn down and promotes to a pinch. Given the user now wants two fingers to work everywhere, which behaviour is right, and what should the torn-down turn do?
+
+Return exact values I can put straight into code and verbatim into the spec. Do not edit any files; hand the values back.
+
+## Agent output
+
+## Thinking
+
+I read `app.md`, all of `visual.md`, `gestures.ts`, `renderer.ts`, the `onGrab` call site in `App.tsx`, and my own 2026-08-26 run log. Then I did the arithmetic against the *current* framing rather than the framing the turn-follow block was written for, and that is where the story starts.
+
+**The gain block was written at f_rest = 0.55 and the app now rests at 0.45.** On the reference device (stage 342 x 471) at f = 0.45: distance = 18.41, S = 51.30 px, D = 153.9 px. So `TURN_GAIN 1.06` gives 49.5 px per quarter at the default pose, not the 61 px the spec cites. The commit threshold at 0.5 needs 24.7 px of tangential travel, plus 8 px of axis-lock slop that is *banked, not spent*, so the total stroke to commit is ~33 px. That is not actually a heavy gesture. Which tells me the user's "I have to swipe very hard and deliberately in the exact direction I want" is not a gain complaint at all. It is a diagnosis, and it is precise: **"in the exact direction" is mechanism (b), and "very hard" is mechanism (c).**
+
+Mechanism (c) in particular is worse than it looks. `drag.velocity` is a single-frame delta, and on iOS the last `pointermove` before a lift is almost always a *decelerating* sample: the thumb is slowing into the release. So the measured release velocity is near zero, the flick branch essentially never fires, and every single turn in the app is forced through the settle branch's full 45 degrees. The flick has been dead code on device. That is the entire "I have to swipe very hard."
+
+And mechanism (b) explains "only slightly rotating and returning" exactly. When the 8 px roll picks the wrong candidate tangent, the drag's projection onto that wrong tangent is the *small* component, so the layer moves a little, never reaches 45 degrees, and springs back to zero. The user reads that as the app refusing. It is the app confidently turning the layer they didn't ask for, by a small amount.
+
+So the four mechanisms are correctly identified, but I want to push back on how one of them gets fixed.
+
+**On raising the axis lock to 13 px with a 1.25x margin forced by 30 px.** The margin idea is right in spirit and wrong in shape, for two reasons. First, a lock threshold that is *banked* rather than *spent* means the layer pops to its accumulated angle the instant the axis resolves. At 13 px that is a 28-degree jump; at the 30 px forced decision it is 64 degrees, past the detent, in one frame. Second, and more important: waiting longer to respond is the thing the user just complained about ("it just slows down the movements"). Delaying the visual response to 30 px to buy certainty spends the exact currency that is already short.
+
+The better instrument is available and the code is already throwing it away. The reason 8 px is noisy is not that 8 px is too few pixels; it is that the vector is measured **from touch-down**, so the thumb-roll and the intentional stroke are summed together into one direction. Measure the direction over the *recent* window instead (the last ~45 ms) and the roll drops out entirely, because the roll is a low-velocity wander that has already finished by the time the stroke starts. Then 10 px of *stroke* is plenty, the response stays fast, and the certainty comes from somewhere else: a **hysteresis window that lets the axis switch** for the first 20 degrees. A wrong first guess self-corrects inside a few frames instead of costing a failed turn and a redo. That is strictly better than waiting, and it is bounded well below the commit point, so a switch can never take back something that looked committed.
+
+**On the detent, which nobody asked about but which breaks if the commit moves.** Today the tick fires at 45 degrees, which is also the commit threshold, so the tick means "let go now and it turns." Drop the commit to 0.35 and the tick fires 13.5 degrees *after* the turn became inevitable, and the single most useful piece of mid-gesture feedback in an app with no haptics is now feedback about a rounding operation. So the detent moves to the commit boundary and changes meaning. With no haptics, the tick's job is to teach the threshold, and the user's complaint is precisely that they cannot feel where the threshold is.
+
+**On the grab acknowledgement, and the thing I got wrong in my own spec.** My spec says the acknowledgement must land within 60 ms of touch because it is the only proof the touch registered. But `onGrab` fires at *axis resolution*, which requires 8 px of movement. On a slow press that is 300 ms, and on a press that never moves it never fires at all. The 60 ms budget was unmeetable by construction. The fix is structural: acknowledge at **touch-down**, where the only thing knowable is the single cubie under the thumb, then **expand** to the layer at engage. That two-stage read is better than what I originally specified, because it maps onto the mechanism honestly: "I have this square" then "this is what will turn." The expansion is itself the affordance that teaches the gesture.
+
+And the lift as specified cannot carry the signal, clamp or no clamp. I checked the arithmetic in linear light: a 1.06x (or even 1.10x) multiply on a bright sticker like Verde moves the byte value from 188 to 196. Four percent. Invisible. Multiplicative lift on an sRGB-encoded bright colour is compressed to nothing. But the **body** is #141518 with a ramp that already runs 0.50 to 3.00, so it has enormous perceptual headroom: 1.55x moves #1A1B1F to #222428, an 8-byte step on a dark neutral against a black room, which reads clearly at every orientation with no clamp problem. And the body is the 6% grout *between* the stickers, so lifting it draws the grabbed layer's 3x3 grid in light grey. **The grabbed layer's grout lights up.** That is the right cue for this product: plastic getting a step lighter reads as the layer coming forward, and it can never read as gloss, which the shading spec forbids.
+
+**On what the hairline should trace.** The spec says "the layer's outer boundary," which in 3D is a screen-space silhouette of a 3x3x1 slab, changing topology as the cube rotates. Real per-frame work, and the wrong object anyway. The right object is the **cut**: the plane where the layer will shear away. It is one closed square loop in the cube's own frame, four segments, known in closed form, parented to the root so it rotates for free. And it falls exactly in the 0.02-unit gap the geometry already leaves between cubie rows, so the seam does not overlay the cube, it lights a groove that is already there. A slice layer gets two loops, which honestly teaches why a slice costs two under OBTM.
+
+**On twist-to-roll.** My original objection was about information and it was the wrong axis to judge on. What survives is the *leakage* clause, and it should govern the implementation: a two-finger grip that maps three degrees of freedom onto one hand will leak a few degrees of incidental roll into every pinch, and a cube that quietly tilts every time you zoom is worse than one that does not roll. So: a real engage threshold, and the threshold is **spent, not banked**. Everything else runs 1:1 and simultaneously, three independent channels with no arbitration, because arbitration ("guess which gesture they mean") reproduces "it's rotating a face I didn't intend" one level up.
+
+**On the second-finger conflict.** Both the spec and the code are wrong, and each is wrong about a different case. "Ignore" fails the user's stated need that two fingers work everywhere. "Tear down instantly" silently discards a live turn on an accidental brush with a visual snap-back and no explanation, which is the same complaint again. What survives from the spec is the sentence that matters: a surprise commit is unforgivable. So promotion is allowed, but promotion can only ever **cancel**, never complete, and it cancels *visibly* on the refusal spring rather than vanishing.
+
+---
+
+## Result
+
+Reference device throughout: stage 342 x 471 px, f_rest = 0.45, S = 51.30 px, D = 153.9 px, distance = 18.41.
+
+### 1. The feel numbers
+
+| Constant | Now | Set to | Why |
+|---|---|---|---|
+| `TURN_GAIN` | 1.06 | **0.90** | 42.0 px per quarter at the default pose (was 49.5). Total stroke to commit falls from 32.7 px to 24.7 px, about 16% of the cube's on-screen face width. A speedcube finger trick is ~20% of face width, so this is slightly lighter than the physical reference, which is right for a surface with no purchase and no springs. |
+| `TANGENT_FLOOR` | 0.62 | **0.68** | Raised *because* the gain dropped, to hold the near-edge-on worst case where it was. Worst case is now 31.4 px/quarter (was 33.7). Brisk, never wild. |
+| `TURN_ENGAGE_PX` (was `AXIS_LOCK_PX`) | 8 | **10** | Not 13. The threshold no longer does the disambiguation work (the window and the switch do), so it should be as small as noise allows. 10 px also gives 2 px of clearance above `TAP_MAX_PX = 8`, which is a hard requirement: a tap must never engage a turn. |
+| **origin at engage** | banked | **spent** | At engage, the turn's origin is the pointer position *at that sample*. The 10 px is spent. This is what removes the pop, and it makes the same physical stroke always produce the same rotation. |
+| `TURN_COMMIT_FRACTION` | 0.5 | **0.35** (31.5 deg) | Agreed. 14.7 px of tangential travel past engage at rest. |
+| `FLICK_DEG_PER_S` | 900 | **520** | Not 400. Once windowed, 520 deg/s is 243 px/s at rest, which sits above a deliberate drag's release (a thumb decelerating into a lift comes off under ~150 px/s) and below a quick swipe. 400 deg/s is 187 px/s, slow enough that nearly every release becomes a flick and the settle branch stops existing. |
+| `FLICK_MIN_ANGLE_DEG` | none | **8** | New guard. The flick branch only fires if the live angle already passed 8 degrees. Kills the worst false positive: a 2-degree rotation with a fast release committing a full quarter. |
+| `VELOCITY_WINDOW_MS` (turn) | n/a | **60** | Same constant the orbit uses, now applied to the turn. Store `{t, angle}` samples; velocity = `(last.angle - first.angle) / (last.t - first.t)`. Fewer than two samples in the window means velocity 0, so a short stab settles rather than flicks. |
+| `LIVE_CLAMP` | 90 deg | **90 deg** | Unchanged. Right as-is. |
+| `TURN_SPRING` | 520 / 26 / 0.55 | **580 / 26.5 / 0.52** | omega_n 33.40 rad/s, zeta 0.763, 2.46% overshoot (1.44 deg on a 58.5 deg carry), settles in 157 ms (was 170). Commits now start from 31.5 deg instead of 45, so the spring carries 30% further; tightening keeps the clock the same or shorter so chained turns do not queue. Overshoot stays in the 2-3% band the spec calls plastic. Clack timing unchanged: `min(70, 157 x 0.6) = 70 ms`. |
+
+**The detent moves and changes meaning.** It fires when the live angle crosses **±31.5 deg** away from zero, and re-arms at **±24.0 deg** returning toward zero (7.5 deg hysteresis, no chatter at the boundary). Same tick: 8 ms bandpassed noise at 3.1 kHz, -26 dBFS. Its meaning is now "past this, releasing turns the layer," which is the only mid-gesture information worth having on a device with no haptics, and it is what teaches the user where the threshold is. During a refusal the angle asymptotes to 5 degrees so no tick ever fires, which is correct.
+
+Feel across the zoom range, quarter-turn cost / total stroke to commit, at |t| = 0.91:
+
+- f_min 0.24: S = 27.4, **22.4 px** / 17.8 px
+- f_rest 0.45: S = 51.3, **42.0 px** / 24.7 px
+- f_max 0.94: S = 107.2, **87.8 px** / 40.7 px
+- floor case (|t| &lt;= 0.68) at rest: **31.4 px** / 21.0 px
+
+### 2. Axis resolution: engage fast, allow a switch, then lock
+
+Four new constants and one changed input vector.
+
+```
+TURN_ENGAGE_PX        10      travel from touch-down before the turn engages
+AXIS_WINDOW_MS        45      the engage vector is measured over this window, not from touch-down
+AXIS_PROVISIONAL_DEG  20      live angle at which the axis locks hard
+AXIS_PROVISIONAL_PX   26      travel from touch-down at which the axis locks hard (backstop)
+AXIS_SWITCH_RATIO     1.35    how much the challenger must beat the incumbent by
+```
+
+**Engage.** At 10 px of travel from touch-down, resolve the axis from the **recent** drag vector: current pointer position minus the earliest sample within the last 45 ms. Fall back to (current minus touch-down) if fewer than two samples exist. 45 ms is 2-3 samples at 60 Hz and 5-6 on ProMotion: enough to average a jitter pixel out, short enough that it is the current stroke and not the roll. Resolution itself is unchanged (largest `|dot(unit tangent, drag)|`, no ratio test, there is no incumbent yet). Set the turn origin to this sample's position and start following.
+
+**Provisional window.** The axis stays provisional until the live angle reaches 20 degrees, or travel from touch-down reaches 26 px, whichever comes first. Both gates are needed: the degree gate governs a normal stroke (fires at 9.3 px past engage), the pixel gate governs a stroke running nearly perpendicular to the tangent, where the angle would barely grow and the axis would stay provisional forever. Both close well below the 31.5-degree commit point, so a switch can never undo something that looked committed.
+
+**The switch.** On every move inside the window, re-score both candidates against the cumulative drag from the *engage point*. Switch if `|score_challenger| &gt;= 1.35 * |score_incumbent|`. On a switch: zero the old layer's rotation the same frame, the new layer takes the same origin, reset the detent counter, and **play no tick** (nothing was decided about a turn).
+
+The derivation, so the number is inspectable. Both tangents are unit vectors, so the ratio is `|cos θ_challenger| / |cos θ_incumbent|`. For two tangents 75 degrees apart on screen (typical of a three-quarter view), 1.35 fires when the drag direction is roughly 7 degrees past the bisector. That is an unambiguous correction rather than a wobble. 1.25 would fire at ~4 degrees, inside the noise; 1.5 would need ~11 degrees, which is a stroke the user has already given up on.
+
+**After the window, lock hard.** Identical to today's behaviour for the rest of the gesture.
+
+`resolveAxis` needs to return the ranked pair rather than just the winner.
+
+### 3. Two-finger twist-to-roll
+
+**My original position, restated in my own words for the record.** I declined it on 2026-08-26 on two grounds. First, information: a cube has 24 identical orientations and no canonical up, so a rolled pose carries nothing an unrolled pose does not, and the one-finger trackball already reaches every orientation with no clamp and no pole. Twist would be a second path to a destination already reachable. Second, leakage: a two-finger grip maps three degrees of freedom onto one hand, so every pinch would inject a few degrees of unrequested roll, and a cube that quietly tilts whenever you zoom is worse than one that never rolls.
+
+**Where that was wrong.** The reachability argument weighed *directness* at zero, and directness is the whole value: getting to a pose in one grip instead of two drags. Worse, without twist a two-finger grip that naturally rotates produces nothing at all for that component, which reads as the gesture being partially ignored. That is a version of the same complaint the user is making everywhere else. The leakage argument survives intact and it governs the implementation below.
+
+```
+TWIST_ENGAGE_DEG      9       relative twist before roll engages
+```
+
+- **Measure** the angle of the vector between the two contacts. Twist is the change in that angle since the pinch baselined.
+- **Engage at 9 degrees.** A phone pinch naturally rotates 3-6 degrees incidentally over its course; 9 is above that and below anything a person would call a deliberate twist.
+- **The deadzone is spent, not banked.** After engaging, `roll = (twist - sign(twist) * 9 deg)`. The cube never jumps 9 degrees at engage. Same discipline as the turn's engage point.
+- **1:1 past the deadzone.** The fingers are literally describing the rotation; anything else breaks the grip.
+- **Axis.** The camera never rotates, so the screen normal is world +z. Screen angle grows clockwise (y down) and a positive world +z rotation is counter-clockwise from the camera, so `q &lt;- Rz(-Δθ_screen) * q`, composed on the **left** and renormalised every frame, exactly like `orbitBy`.
+- **Coexistence: three independent channels, no arbitration.** Centroid translation drives the tumble (engages immediately, gain unchanged). Span ratio drives the zoom (engages at `PINCH_THRESHOLD_PX = 12`, unchanged). Twist drives the roll (engages at 9 degrees). Each engages on its own and stays engaged for the rest of the gesture. Do not add dominant-axis arbitration: picking "the one gesture the user means" is what makes a gesture feel like it is guessing, and it reproduces "it's rotating a face I didn't intend" at the two-finger level. This is the map gesture, and it is what the user asked for.
+- The decomposition is already orthogonal: two fingers rotating about their midpoint keep the centroid still, so a pure twist produces zero tumble. A one-handed twist (thumb pivots, forefinger swings) does move the centroid and will tumble a little. That is honest, the hand moved.
+- **No momentum.** Roll stops when the fingers stop, like the zoom. The trackball coasts because a flicked cube spins; a twist is a grip adjustment, not a throw, and a cube that keeps rolling after release is the "drifting into something you did not ask for" failure the zoom block already rejected. The one-finger flick already provides a spinning cube for anyone who wants one.
+- **No clamp, no snap, no settle. Silent.** Consistent with the trackball. Sound means the puzzle changed.
+- **Re-baseline the twist origin whenever the pointer count changes**, alongside the existing centroid and span re-baseline, so lifting and replacing a finger injects no jump.
+- **Reduced motion:** no change. There is no momentum to remove.
+
+### 4. The grab acknowledgement
+
+Two stages, two geometries, one material.
+
+**Stage one, at pointerdown on the cube (this is what fixes the 60 ms budget).** A square **ring** traces the touched cubie's face, centred in the 6% grout between the sticker edge and the cubie edge. Centreline half-width = midway between the sticker's half-width and the cubie's half-width, computed from the palette's inset, so it works on both palettes: `r = (CUBIE * (1 - 2*inset) + CUBIE) / 4`. Cardinal (inset 0.06): r = 0.4606. Universal (inset 0.09): r = 0.4459. Pushed **0.008** world units proud of the cubie's face plane. The touched cubie lifts.
+
+**Stage two, at engage.** The ring dissolves and the **seam** draws: the cut plane's closed square loop, on the cube's four side faces, and the whole layer lifts.
+
+```
+Layer on axis a at coordinate c:
+  c = +1  -&gt;  one loop at a = +0.5
+  c = -1  -&gt;  one loop at a = -0.5
+  c =  0  -&gt;  TWO loops, at a = -0.5 and a = +0.5   (a slice takes two cuts; this is
+              the same fact that makes a slice cost 2 under OBTM)
+Each loop: the square of side 2.98 in that plane, joining the four points at
+  |other two axes| = 1.49, drawn as four quads lying on the cube's side faces,
+  each pushed 0.008 world units outward from its face plane.
+Each quad's length is 2.98 + w so the corners close.
+```
+
+The cut plane at ±0.5 falls exactly in the middle of the 0.02-unit gap the geometry already leaves between cubie rows. The seam is not an overlay on the cube, it lights a groove that is already there.
+
+**Width.** `w = max(0.02, 1.2 / unitScreenPx())` world units. Below f ≈ 0.53 the 1.2 CSS px minimum governs, so the line never falls below legibility when zoomed out (a world-fixed 0.02 would render 0.55 px at f_min and shimmer). Above f ≈ 0.53 the groove width governs and the seam reads as the groove itself lighting up. Recompute only on zoom change; scale each quad on its thickness axis.
+
+**Material, shared by ring and seam.**
+
+```
+color:      #FFFFFF
+blending:   THREE.AdditiveBlending
+transparent: true
+opacity:    0.62          (0.30 in a refusal state)
+depthWrite: false
+depthTest:  true          (the back of the loop must be hidden, or it reads as a
+                           wireframe box rather than a groove on a solid)
+side:       THREE.DoubleSide
+```
+
+Additive is the right call in a renderer with flat `MeshBasicMaterial`, no lights, and a black room: the line lifts whatever is under it instead of replacing it, so it survives on both plastic and sticker. On #000 it renders ~#9E9E9E, a clear light line and not a glow. On the brightest body face #28292E it renders ~#C6C7CC. On a Verde sticker it clips toward white. Never conditional, never state-dependent except for the refusal alpha.
+
+**The lift.** Applied in `applyShading`, in linear light, gated on a new `grabbed` flag so the auto-scramble (which also sets `liveBase`) does not light layers up in sequence.
+
+```
+Body multiplier:    x 1.55, UNCLAMPED.  #1A1B1F -&gt; #222428, #0B0C0E -&gt; #111214,
+                    #28292E -&gt; #33343A.  A clear 6-11 byte step on a dark neutral at
+                    every orientation, and because the body is the grout, this draws
+                    the grabbed layer's 3x3 grid.  THIS is the lift.
+Sticker multiplier: x 1.10, UNCLAMPED (was 1.06 clamped at 1.0).  Small and supporting:
+                    ~4% on a bright sticker, more on the dark faces.  It exists so the
+                    stickers move with the grout rather than looking dead beside it.
+                    The clamp is deleted; the clamp was never the reason it was weak.
+```
+
+**Timing.**
+
+| Event | Treatment |
+|---|---|
+| Touch-down | Ring opacity 0 -&gt; 0.62 over **50 ms linear**. Lift 1.00 -&gt; full over **90 ms `cubic-bezier(0.16, 1, 0.3, 1)`**. Linear, not ease-out, because ease-out's slow start is the enemy of "it registered now." Full opacity at 50 ms, inside the 60 ms budget. |
+| Engage | Ring 0.62 -&gt; 0 and seam 0 -&gt; 0.62, both **80 ms linear**, fully overlapping. The other eight cubies ramp their lift over the same 80 ms while the touched one holds, so the layer fills in around the thumb. |
+| Axis switch | Old seam 0.62 -&gt; 0, new seam 0 -&gt; 0.62, both **60 ms linear**, overlapping. Lift follows over 60 ms. |
+| Release, no commit | Everything -&gt; 0 over **120 ms `cubic-bezier(0.32, 0, 0.67, 0)`**. |
+| Commit | Clear **begins** at `min(70, settleMs * 0.6)` ms after release, which is the clack's own moment, and runs **90 ms `cubic-bezier(0.32, 0, 0.67, 0)`**. The light goes out as the clack lands. |
+| Cancelled by a second finger | Clear over **130 ms**, matching the refusal spring's return. |
+| Refusal | Seam at **0.30**, no lift. Marked, not raised: "I see you, this is locked." Same 50 / 120 ms. |
+| Reduced motion | All of the above at 0 ms, on and off instantly. The commit clear still waits `min(70, settleMs * 0.6)` so it never precedes the landing. The acknowledgement is an accessibility affordance, like the sound, not a thing to reduce. |
+
+**Callback shape (the developer owns the exact API).** `onGrab` must be split: `onTouchCubie(cubieIndex)` at pointerdown, `onGrab(base)` at engage, `onAxisSwitch(base)` inside the window, `onRelease()` to clear. Move the audio unlock from `onGrab` to `onTouchCubie`, which is strictly earlier and therefore better.
+
+**Register note for the spec:** the seam is not decoration. It is the app's only affirmative marker for "which layer is under your thumb," on a surface with no haptics. It is a Nielsen visibility-of-system-status control, and it must never be conditional.
+
+### 5. The spec conflict, and interruption
+
+**`visual.md` L353-356 is wrong and so is the code.** The spec's "ignore" fails the user's stated need that two fingers work everywhere, and "except during a turn" is a rule they will hit and not understand. The code's instant teardown discards a live turn on an accidental brush with a visual snap-back and no explanation, which is a fresh instance of "only slightly rotating and returning."
+
+**Promote, but promotion can only ever cancel.** That is what survives of "a surprise commit is unforgivable," and it is the load-bearing half.
+
+- The second finger **cancels the turn to 0 degrees on the refusal spring** `{stiffness: 700, damping: 34, mass: 0.5}` (zeta 0.91, ~130 ms, no bounce). Not an instant snap.
+- **It never commits.** Whatever the live angle was, even 85 degrees, the target is 0.
+- **Silent.** No clack, the puzzle did not change. No thunk either, nothing was refused.
+- The grab acknowledgement clears on the same 130 ms, which is the visible explanation the current teardown lacks.
+- The pinch baselines centroid, span and twist on that frame, as today. The cancelling return runs concurrently with the pinch; they share no state.
+- Reduced motion: 90 ms linear (`REDUCED_SETTLE_MS`) instead of the spring.
+
+I considered and rejected a stray-contact guard (restore the turn if the second finger lifts within 120 ms). It buys a 120 ms window of uncertain state to solve a problem the 130 ms return already handles gracefully, and the fact that promotion can never commit means the failure mode is always benign.
+
+**Interruption (mechanism a) needs two behaviours, not one,** because `this.animation` is written by three different things.
+
+```
+On pointerdown while an animation is running:
+  animationKind 'turn'  -&gt; LAND IT. Set the layer to its target this frame, fire
+                           onCommit, fire the clack if it has not fired. Then process
+                           the new touch against a settled cube.
+                           Instant, not eased: the new touch is about to raycast, and a
+                           raycast against a layer 70% through a rotation returns a
+                           cubie at a position that will have moved. It also reads as
+                           fast rather than broken, and it is the same release valve
+                           "any pointerdown kills momentum" already establishes.
+  animationKind 'view'  -&gt; STOP IT WHERE IT IS (the double-tap slerp, the zoom settle).
+                           A view change carries no logical commitment, so completing it
+                           would be the app moving the cube after you touched it. A zoom
+                           settle stopped outside its limit re-settles on the next
+                           release.
+```
+
+This needs one new field, `animationKind: 'turn' | 'view' | null`, set alongside `this.animation`. Both the one-finger and two-finger paths run it, and the `if (this.animating) return` line is deleted.
+
+### 6. `tokens.json` diff, drop in verbatim
+
+```
+motion.gesture.turn-gain              1.06 -&gt; 0.90
+motion.gesture.turn-tangent-floor     0.62 -&gt; 0.68
+motion.gesture.turn-engage-px         NEW    10      // renames axis-lock-px (8); spent, not banked
+motion.gesture.axis-window-ms         NEW    45
+motion.gesture.axis-provisional-deg   NEW    20
+motion.gesture.axis-provisional-px    NEW    26
+motion.gesture.axis-switch-ratio      NEW    1.35
+motion.gesture.turn-commit-fraction   NEW    0.35    // was implicit 0.5
+motion.gesture.flick-degps            900 -&gt; 520
+motion.gesture.flick-min-angle-deg    NEW    8
+motion.gesture.turn-velocity-window-ms NEW   60      // same window the orbit already uses
+motion.gesture.detent-deg             NEW    31.5    // MEANING CHANGED: the commit
+                                                     // boundary, not the rounding boundary
+motion.gesture.detent-release-deg     NEW    24.0
+motion.gesture.twist-engage-deg       NEW    9       // spent, not banked
+motion.gesture.live-clamp-deg         90              (unchanged)
+motion.gesture.pinch-threshold-px     12              (unchanged)
+
+motion.spring.turn                    {520, 26, 0.55} -&gt; {580, 26.5, 0.52}
+                                      $description: "zeta 0.763, 2.46% overshoot,
+                                      settles in 157ms. Commits now start at 31.5deg
+                                      rather than 45, so the carry is 30% longer."
+
+color.grab.seam                       NEW    #FFFFFF @ 0.62 alpha, ADDITIVE blend
+color.grab.seam-refused               NEW    #FFFFFF @ 0.30 alpha, ADDITIVE blend
+color.grab.lift-body                  NEW    1.55    // multiplier on the body ramp,
+                                                     // linear light, UNCLAMPED
+color.grab.lift-sticker               1.06 -&gt; 1.10   // UNCLAMPED; clamp at 1.0 deleted
+size.grab.hairline-px                 NEW    1.2     // screen-space minimum
+size.grab.hairline-world              NEW    0.02    // the cubie gap; governs above f~0.53
+size.grab.surface-offset              NEW    0.008
+
+motion.duration.grab-in               NEW    50ms    linear
+motion.duration.grab-lift             NEW    90ms    cubic-bezier(0.16, 1, 0.3, 1)
+motion.duration.grab-expand           NEW    80ms    linear
+motion.duration.grab-switch           NEW    60ms    linear
+motion.duration.grab-out              NEW    120ms   cubic-bezier(0.32, 0, 0.67, 0)
+motion.duration.grab-out-commit       NEW    90ms    cubic-bezier(0.32, 0, 0.67, 0)
+motion.duration.grab-out-cancel       NEW    130ms   (the refuse spring's clock)
+```
+
+No dark-mode counterparts: this app has one theme, a black room, deliberately.
+
+### 7. Spec blocks, ready to drop into `visual.md`
+
+Replacing the `turn-follow` block:
+
+```
+~~~ turn-follow
+gain: 90deg per  0.90 * S * max(0.68, |t|)  px of drag along the layer's screen tangent,
+  measured from the ENGAGE POINT, not from touch-down.
+  S is from the camera block. |t| is the SCREEN-PROJECTED LENGTH of the unit tangent.
+  At f_rest 0.45 on the reference device S = 51.30px, so at the default pose (|t| ~ 0.91)
+  a quarter turn is 42.0px and the total stroke to commit is 24.7px -- about a sixth of
+  the cube's on-screen face width, against a physical finger trick's fifth.
+  The 0.68 floor guards a near-edge-on face, where |t| -&gt; 0 and an uncompensated gain
+  explodes. Worst case 31.4px per quarter at rest.
+clamp: +/-90deg of live rotation. A drag commits at most one quarter.
+
+ENGAGE, at 10px of travel from touch-down:
+  The axis resolves from the RECENT drag vector -- current position minus the earliest
+  pointer sample within the last 45ms, falling back to (current - touch-down) if fewer
+  than two samples exist. Measuring from touch-down sums the thumb-roll into the stroke
+  and is why 8px picked the wrong axis: a contact patch rolls further than the stroke
+  has travelled.
+  The turn's ORIGIN is that sample's position. The 10px is SPENT, not banked, so the
+  layer starts at exactly 0deg and never pops. It also puts engage 2px clear of
+  TAP_MAX_PX, so a tap can never engage a turn.
+
+PROVISIONAL, until the live angle reaches 20deg or travel from touch-down reaches 26px:
+  Re-score both candidates every move against the cumulative drag from the engage point.
+  SWITCH if |score_challenger| &gt;= 1.35 * |score_incumbent|. On a switch the old layer
+  zeroes the same frame, the new layer takes the same origin, the detent resets, and no
+  tick plays.
+  1.35 is a ~7deg band past the bisector for tangents 75deg apart: an unambiguous
+  correction, not a wobble. Both gates are needed -- the degree gate governs a normal
+  stroke, the pixel gate governs a stroke running nearly perpendicular to the tangent
+  where the angle would barely grow. Both close well below the 31.5deg commit point, so
+  a switch can never take back something that looked committed.
+  After the window, the axis is locked hard for the rest of the gesture.
+~~~
+```
+
+Replacing the detent paragraph and the `turn-snap` block:
+
+```
+**The detent.** The tick fires at the COMMIT boundary, not at the rounding boundary. It
+means "past this, releasing turns the layer," which is the only mid-gesture information
+worth having on a device with no haptics, and it is what teaches the threshold.
+
+~~~ detent
+fires at +/-31.5deg away from zero; re-arms at +/-24.0deg returning toward zero.
+7.5deg of hysteresis, so a wobble at the boundary cannot chatter.
+Sound unchanged: 8ms bandpassed noise at 3.1kHz, -26 dBFS. Nothing visual.
+A refusal asymptotes to 5deg, so it never ticks. Correct: nothing will commit.
+~~~
+
+~~~ turn-snap
+Release velocity is ANGULAR velocity over the last 60ms of samples, never a single frame
+delta. On iOS the last pointermove before a lift is a decelerating sample, so single-frame
+sampling read near zero and the flick branch never fired on device at all.
+Fewer than two samples in the window -&gt; velocity 0 -&gt; settle.
+
+Flick   -- |velocity| &gt;= 520deg/s AND |angle| &gt;= 8deg: fire to the next quarter in the
+           direction of travel. 520deg/s is 243px/s at rest, above a deliberate drag's
+           release and below a quick swipe. The 8deg floor stops a fast release at 2deg
+           committing a whole quarter.
+Settle  -- otherwise, commit if |angle| &gt;= 0.35 of a quarter (31.5deg), else return to 0.
+
+Either way, held to a single quarter, and the release velocity is passed into the spring.
+
+spring: { stiffness: 580, damping: 26.5, mass: 0.52, velocity: &lt;release rad/s&gt; }
+  natural frequency 33.40 rad/s, damping ratio 0.763
+  =&gt; 2.46% overshoot (1.44deg on a 58.5deg carry), settles in ~157ms, no second bounce
+The clack is unchanged: min(70, settleMs * 0.6) = 70ms after release.
+~~~
+```
+
+Replacing the "Two fingers, always" paragraph's final two sentences, and adding roll:
+
+```
+**Two fingers, always -- three channels, no arbitration.** With two pointers down, the
+midpoint's translation orbits at the trackball gain, the span's ratio zooms, and the
+relative twist rolls, all SIMULTANEOUSLY and each with its own engage state. Re-baseline
+all three at the instant the pointer count changes.
+
+Do not arbitrate between them. Picking "the one gesture the user means" is what makes a
+gesture feel like it is guessing, and it reproduces "it turned a face I did not intend"
+one level up.
+
+~~~ twist-roll
+engage:  9deg of relative twist. A phone pinch leaks 3-6deg of incidental rotation over
+         its course; 9 is above that and below a deliberate twist.
+deadzone SPENT, not banked: roll = twist - sign(twist) * 9deg. No jump at engage.
+follow:  1:1, no smoothing. The fingers are describing the rotation.
+axis:    world +z (the camera never rotates, so the screen normal IS +z).
+         q &lt;- Rz(-dTheta_screen) * q, composed on the LEFT, renormalised every frame.
+         The sign flips because screen angle grows clockwise and +z is counter-clockwise
+         from the camera.
+NO momentum. Roll stops when the fingers stop, like the zoom. The trackball coasts
+  because a flicked cube spins; a twist is a grip adjustment, not a throw.
+NO clamp, no snap, no settle. Silent.
+~~~
+
+**Recorded beside the decision: the position this supersedes.** On 2026-08-26 design
+declined twist-to-roll on two grounds. Information: a cube has 24 identical orientations
+and no canonical up, the one-finger trackball already reaches every one of them, so twist
+is a second path to a destination already reachable. Leakage: a two-finger grip maps three
+degrees of freedom onto one hand, so every pinch injects unrequested roll, and a cube that
+quietly tilts whenever you zoom is worse than one that never rolls.
+
+The first ground was wrong. It weighed DIRECTNESS at zero -- one grip instead of two drags
+-- and, worse, without twist a grip that naturally rotates produces nothing for that
+component, which reads as the gesture being half-ignored. The second ground survives and
+is exactly why the 9deg deadzone exists and is spent rather than banked.
+```
+
+Replacing `visual.md` L353-356 ("A second finger arriving during a live turn is ignored outright..."):
+
+```
+**A second finger during a live turn promotes to the pinch, and promotion can only ever
+CANCEL.** Ignoring it fails the user's need that two fingers work everywhere, and
+"everywhere except during a turn" is a rule nobody can hold. Tearing the turn down
+instantly is worse: an accidental brush discards a live turn with a visual snap-back and
+no explanation, which reads exactly like the app refusing.
+
+What survives of "a surprise commit is unforgivable" is the load-bearing half.
+
+~~~ turn-interrupted
+Second finger down during a live turn:
+  target 0deg, ALWAYS, whatever the live angle was -- even at 85deg. It never commits.
+  return on the refuse spring { stiffness: 700, damping: 34, mass: 0.5 }
+    -&gt; damping ratio 0.91, ~130ms, no bounce.
+  SILENT. No clack (the puzzle did not change) and no thunk (nothing was refused).
+  The grab acknowledgement clears over the same 130ms -- that is the visible explanation
+    the instant teardown lacked.
+  The pinch baselines centroid, span and twist on the same frame. The cancelling return
+    runs concurrently; they share no state.
+  Reduced motion: 90ms linear.
+
+Second finger down during the SNAP spring (post-release): the turn lands and commits, as
+below. The release already expressed the intent to commit; do not take it back.
+~~~
+
+**Any pointerdown lands a running turn and stops a running view change.** The old
+`if (animating) return` swallowed every touch for the ~160ms the spring ran, so turning at
+speed silently lost every second turn.
+
+~~~ interrupt
+animation kind 'turn' -&gt; LAND IT. Set the layer to its target this frame, commit, fire
+  the clack if it has not fired, then process the new touch. Instant, not eased: the new
+  touch is about to raycast, and a raycast against a layer 70% through a rotation returns
+  a cubie at a position that will have moved. It reads as fast, not broken, and it is the
+  same valve "any pointerdown kills momentum" already establishes.
+animation kind 'view' -&gt; STOP IT WHERE IT IS (the double-tap slerp, the zoom settle). A
+  view change carries no logical commitment, so completing it would be the app moving the
+  cube after you touched it. A zoom stopped outside its limit re-settles on the next
+  release.
+~~~
+```
+
+Replacing the "Grabbing a layer" section entirely:
+
+```
+### Grabbing a layer
+
+Touch begins on the cube. **Within 60ms** the app must acknowledge -- absolute, because
+with no haptic there is no other confirmation the touch registered. The old spec fired
+this at axis resolution, which needs 8px of movement: on a slow press that is 300ms, and
+on a press that never moves it never fires at all. The budget was unmeetable by
+construction. It fires at TOUCH-DOWN now, and expands.
+
+**Stage one, pointerdown.** A square hairline RING traces the touched cubie's face,
+centred in the grout between the sticker edge and the cubie edge. That cubie lifts. "I
+have this square."
+
+**Stage two, engage.** The ring dissolves into the SEAM -- the cut plane where the layer
+will shear away -- and the whole layer lifts. "This is what will turn."
+
+The seam is the right object, not a silhouette. A silhouette of a 3x3x1 slab is a
+screen-space computation that changes topology as the cube rotates; the cut is one closed
+square loop in the cube's own frame, four segments, known in closed form, parented to the
+root so it rotates for free. And it falls exactly in the 0.02-unit gap the geometry
+already leaves between cubie rows, so the seam does not overlay the cube -- it lights a
+groove that is already there.
+
+~~~ grab-geometry
+RING (stage one): a square ring on the touched cubie's outer face.
+  centreline half-width r = (CUBIE * (1 - 2*inset) + CUBIE) / 4
+    Cardinal (inset 0.06): r = 0.4606.  Universal (inset 0.09): r = 0.4459.
+  pushed 0.008 world units proud of the cubie's face plane.
+
+SEAM (stage two): the cut plane's closed loop, on the cube's four side faces.
+  layer on axis a at coordinate c = +1  -&gt;  ONE loop at a = +0.5
+                                  c = -1  -&gt;  ONE loop at a = -0.5
+                                  c =  0  -&gt;  TWO loops, at a = -0.5 and a = +0.5
+  A slice takes two cuts. That is the same fact that makes a slice cost 2 under OBTM,
+  and showing it is honest.
+  Each loop: the square of side 2.98 in that plane, four quads lying on the side faces,
+  each pushed 0.008 outward from its face plane, each 2.98 + w long so corners close.
+
+WIDTH, both: w = max(0.02, 1.2 / unitScreenPx()) world units.
+  Below f ~ 0.53 the 1.2 CSS px minimum governs, so the line never falls below legibility
+  zoomed out (a world-fixed 0.02 renders 0.55px at f_min and shimmers). Above it the
+  groove width governs and the seam reads as the groove itself lighting up.
+  Recompute on zoom change only; scale each quad on its thickness axis.
+
+MATERIAL, both:
+  color #FFFFFF, THREE.AdditiveBlending, transparent, opacity 0.62,
+  depthWrite false, depthTest TRUE, side DoubleSide.
+  Additive is right in a renderer with flat MeshBasicMaterial, no lights and a black
+  room: it lifts what is under it rather than replacing it, so it survives on plastic
+  AND on a saturated sticker. On #000 it renders ~#9E9E9E -- a light line, not a glow.
+  On the brightest body face #28292E, ~#C6C7CC. On Verde it clips toward white.
+  depthTest must stay TRUE: the back of the loop must be hidden or it reads as a
+  wireframe box rather than a groove on a solid.
+  Refusal state: opacity 0.30, and no lift. Marked, not raised.
+~~~
+
+~~~ grab-lift
+Applied in applyShading, in LINEAR light, gated on a `grabbed` flag so the auto-scramble
+-- which also sets liveBase -- does not light layers up in sequence.
+
+BODY   x 1.55, UNCLAMPED.  #1A1B1F -&gt; #222428.  #0B0C0E -&gt; #111214.  #28292E -&gt; #33343A.
+  A clear 6-11 byte step on a dark neutral against a black room, at EVERY orientation.
+  Because the body is the 6% grout, this draws the grabbed layer's 3x3 grid in light
+  grey. This is the lift.
+STICKER x 1.10, UNCLAMPED. The clamp at 1.0 is DELETED, and it was never the reason the
+  lift was weak: a multiply on an sRGB-encoded bright colour is compressed to nothing.
+  Verde at 1.06 moves byte 188 -&gt; 194; at 1.10, 188 -&gt; 196. Four percent. It exists so
+  the stickers move with the grout rather than looking dead beside it, and it is more
+  visible on the dark faces. It is not the signal.
+~~~
+
+~~~ grab-timing
+touch-down   ring 0 -&gt; 0.62 over 50ms LINEAR (not ease-out: its slow start is the enemy
+             of "it registered now"). Lift 1.00 -&gt; full over 90ms
+             cubic-bezier(0.16, 1, 0.3, 1). Full at 50ms, inside the 60ms budget.
+engage       ring 0.62 -&gt; 0 and seam 0 -&gt; 0.62, both 80ms LINEAR, fully overlapping. The
+             other eight cubies ramp their lift over the same 80ms while the touched one
+             holds, so the layer fills in around the thumb.
+axis switch  old seam out, new seam in, both 60ms LINEAR, overlapping. Lift follows.
+release      all -&gt; 0 over 120ms cubic-bezier(0.32, 0, 0.67, 0).
+commit       clear BEGINS at min(70, settleMs * 0.6)ms after release -- the clack's own
+             moment -- and runs 90ms cubic-bezier(0.32, 0, 0.67, 0). The light goes out
+             as the clack lands.
+cancelled    130ms, matching the refuse spring's return.
+reduced motion: all of the above at 0ms, on and off instantly. The commit clear still
+             waits min(70, settleMs * 0.6) so it never precedes the landing. This is an
+             accessibility affordance, like the sound, not a thing to reduce.
+~~~
+
+The seam is not decoration. It is the app's only affirmative marker for which layer is
+under your thumb, on a surface with no haptics. **It must never be conditional.**
+```
+
+### Files read
+
+- `/Users/erickanney/builder/projects/quarter-turn/.claude/worktrees/cube-rotation-face-controls-56433f/src/app.md`
+- `/Users/erickanney/builder/projects/quarter-turn/.claude/worktrees/cube-rotation-face-controls-56433f/src/interfaces/@brand/visual.md`
+- `/Users/erickanney/builder/projects/quarter-turn/.claude/worktrees/cube-rotation-face-controls-56433f/dist/web/cube/gestures.ts`
+- `/Users/erickanney/builder/projects/quarter-turn/.claude/worktrees/cube-rotation-face-controls-56433f/dist/web/cube/renderer.ts`
+- `/Users/erickanney/builder/projects/quarter-turn/.claude/worktrees/cube-rotation-face-controls-56433f/dist/web/cube/motion.ts`
+- `/Users/erickanney/builder/projects/quarter-turn/.claude/worktrees/cube-rotation-face-controls-56433f/dist/web/App.tsx`
+- `/Users/erickanney/builder/projects/quarter-turn/.claude/worktrees/cube-rotation-face-controls-56433f/wiki/runs/2026-08-26T20-36-03-builder:design-expert.md`
+
+No files edited.

@@ -1,0 +1,65 @@
+# Run — builder:code-reviewer — 2026-08-28T20:38:40.756Z
+
+Captured verbatim by the SubagentStop hook: the handoff Builder sent, and the agent's complete output (its `## Thinking` and `## Result`).
+
+## Handoff
+
+**Review the gesture and icon changes**
+
+Review the code changed on this branch in /Users/erickanney/builder/projects/quarter-turn/.claude/worktrees/cube-rotation-face-controls-56433f. This is a git worktree; work only inside it.
+
+`git diff master...HEAD` is the change. Read the commit messages too — they carry the reasoning and I would rather you challenge that reasoning than re-derive it.
+
+**Context.** The user reported three things about the installed iPhone app: 3D rotation is hard and they want two fingers to zoom and rotate together; face turns rotate a layer they did not intend or turn slightly and spring back, needing a hard deliberate swipe that slows everything down; and the app tile was a broken generated image. Everything here follows from those three.
+
+**The files that matter most:**
+- `dist/web/cube/gestures.ts` — heavily reworked. Windowed release velocity, a new engage/provisional/switch model for axis resolution, landing a settling turn instead of dropping the touch, a deferred raycast, two-finger twist-to-roll, turn cancellation on a refuse spring, a spring generation guard.
+- `dist/web/cube/renderer.ts` — the grab acknowledgement (a ring at touch-down, a seam at engage, a body lift in `applyShading`).
+- `dist/web/App.tsx` — callback wiring.
+- `dist/scripts/render-icon.mjs` (new) and `dist/scripts/normalize-icon.mjs`.
+
+**Where I most want a hard look, because these are the places I am least sure:**
+
+1. **The deferred raycast in `onDown`/`onMove`.** When a new touch lands a still-settling turn, `onCommit` reaches the renderer through React, so the cubie transforms are stale for the rest of that tick and picking immediately would grab the piece that used to be under the finger. I hold the raycast over to the first move event. I verified in a real browser that four turns 25ms apart commit the same total as four unhurried ones, so the React flush does happen in time — but tell me whether the reasoning is sound and whether there is a path where a `deferred` drag never resolves, or resolves against the wrong state, or leaks.
+
+2. **State-machine completeness.** `Drag` is now a five-member union (`pending | turn | orbit | pinch | deferred`) crossed with a pinch that can promote from any of them, a `landTurn` finisher, an `onAnimationStopped` finisher, and a `springGeneration` guard. Look for a transition that strands the cube: a layer left rotated with no drag, a finisher that never runs or runs twice, a pointer left in the `pointers` map, capture never released.
+
+3. **The axis switch.** `maybeSwitchAxis` mutates `drag.base`/`tangent`/`tangentLength` in place while the turn is live. Is there a case where it switches to a layer that is not actually under the finger, or switches after the user has seen enough rotation to feel robbed?
+
+4. **The two-finger twist maths** in the pinch branch of `onMove`: unwrapping across the ±π seam, the frozen deadzone sign, and whether lifting one of three fingers can jump the roll (`pinchDistance`/`pinchAngle` both take the first two entries of a Map, whose order can change).
+
+5. **`renderer.ts` grab geometry** — `grabGeometry()` builds BufferGeometries on every rebuild and I dispose the old ones in `rebuildGrab`. Check for a leak, and check the seam/ring maths (the `vec` helper and the cut-plane offsets) actually describe the surfaces I claim.
+
+6. Anything in `render-icon.mjs` / `normalize-icon.mjs` that would break if run twice, or on a machine without Pillow.
+
+Check it all against `~/builder/.claude/knowledge/coding-pitfalls.md` and the backend convention. Flag what will cause real pain and skip what will not; if it is fine, say so plainly rather than manufacturing findings.
+
+## Agent output
+
+## Thinking
+
+I read `gestures.ts`, `renderer.ts`, `App.tsx`, `useSolve.ts`/`session.ts` (to trace how `onCommit` actually reaches the renderer), both icon scripts, and the full `gestures.commit.test.ts` + `gestures.test.ts` suites. Checked against `pitfalls/canvas.md`, `pitfalls/frontend.md`, `pitfalls/testing.md`, `pitfalls/general.md`, and `backend-convention.md`'s testing section.
+
+**On the deferred raycast (concern 1):** The doc comment says landing a settling turn "fires `onCommit`, which reaches the renderer through React." That's not what the code does — `App.tsx`'s `onCommit` calls `solveRef.current.dispatch(...)`, and `useSolve.ts`'s `dispatch` calls `renderer?.setState(after.cube)` **synchronously**, not through a React re-render (confirmed `reduce`'s `'turn'` case always returns `cube: applyMoves(...)`, a new reference, so the synchronous branch is always taken for a real commit). So the stated mechanism is wrong. But the actual mechanism that *does* justify the deferral is real: `setState` only updates each `CubieRef`'s `basePosition`/`baseQuaternion` data; the actual Three.js mesh transforms `pickSticker`'s raycaster hits (`cubie.group.position`/`quaternion`) are only written once per `requestAnimationFrame` inside `loop() → applyTransforms()`. A raycast fired synchronously inside the `pointerdown` handler (which runs off the DOM event queue, not the rAF queue) will hit whatever the mesh looked like as of the *last* rendered frame — i.e., pre-commit — exactly as the author worried. So the fix is sound, but for a different reason than documented. That's worth fixing in the comment: if `dispatch` is ever made batching/async in a way that looks like it "goes through React," someone could read this comment, conclude the deferral is now redundant, and delete it — the real dependency (render-loop frame lag) would still be there.
+
+**On the pinch/twist math (concern 4), this is the one I'd actually block on.** `pinchDistance()` and `pinchAngle()` both take the first two entries of `this.pointers` (a `Map`), while `centroid()` averages *all* entries. A pinch never resets when a third finger lands mid-gesture — `onDown`'s `pointers.size &gt; 2` branch just returns, leaving the existing `PinchDrag` object (with its `startSpan`/`lastCentroid`/`lastTwist` baselined against the original two fingers) in place while the map now has three entries. Two concrete jump paths follow:
+- **Centroid jump on the extra touch alone.** The very next `onMove` in the pinch branch recomputes `centroid()` over all three points, discontinuously shifting the average toward wherever the third finger landed, vs. `drag.lastCentroid` (baselined on two). `orbitBy(centre.x - drag.lastCentroid.x, ...)` fires that whole jump as one frame's rotation — no finger needs to lift.
+- **Identity swap on lift.** If one of the *original* two fingers then lifts while the stray third stays down, `onUp`'s pinch branch only resets when `pointers.size` drops **below** 2 (`if (this.pointers.size &gt;= 2) return;`); at exactly 2 remaining it does nothing, so the drag object survives unchanged while `pinchDistance()`/`pinchAngle()` now silently compute over a *different* pair. `pinchAngle` is order/pair-dependent, so the roll delta on the next move is computed against a baseline (`drag.lastTwist`) taken from a geometrically unrelated pair — a discontinuous spin.
+
+Neither path is guarded, and neither is tested (`gestures.commit.test.ts`'s pinch/twist suites only ever use pointerIds 1 and 2). Given this PR's whole premise is "don't surprise the user with rotation they didn't ask for," shipping a new way for a stray third contact (palm edge, adjacent finger — plausible during a fast two-hand cube grab) to jump-rotate the cube is a real regression risk in exactly the area under test. Fix: capture the two pinch pointerIds in the `PinchDrag` at creation and look them up specifically for span/angle *and* centroid, and re-baseline (not just no-op) whenever the tracked pair's membership changes.
+
+**State machine (concern 2), axis switch (concern 3), and grab geometry (concern 5):** I traced every transition — pinch promotion from `pending`/`turn`/`orbit`/`deferred`/null, `cancelTurn`'s idempotent `clear()`, `landSettlingTurn`'s idempotent `land()`, `springGeneration` invalidating any spring started without an explicit `stopAnimation()` call, pointer capture set/release, and the &gt;2-finger passthrough. All of it is internally consistent — I could not find a strand where a layer is left rotated with no drag, a finisher runs twice, or a pointer is leaked in the map. The axis-switch logic re-derives against the same two sticker-normal candidates every time, so it can't hand the turn to a layer that isn't under the touched cubie, and the provisional window is small enough (20deg/26px) that I don't have a concrete case where it feels like a bait-and-switch — this part reads as carefully tuned, not guessed at. `grabGeometry()`/`rebuildGrab()` disposes exactly what it allocates on every rebuild; the ring and seam offsets (`face`, `reach`, the annulus radii) check out arithmetically against the actual cubie/sticker geometry. `CubeRenderer.dispose()` doesn't dispose the base sticker/body geometries or materials at all, but that's pre-existing and moot for a single long-lived instance — not something this diff should be on the hook for.
+
+**Icon scripts (concern 6):** Both are pure functions of their input with no read-modify-write cycle, so re-running either is idempotent. Neither checks for Pillow up front; missing it surfaces as a loud `execFileSync` throw (non-zero exit, stack trace) rather than a silent corrupt output — an acceptable failure mode for a one-off dev tool that never runs at build/runtime. `icon-master.test.ts` is a good drift guard given iOS's install-once icon caching.
+
+**Tests overall:** thorough and load-bearing where they exist (the ownership-style guards — flick threshold, quarter-turn clamp, axis window — read like they'd actually go red if the underlying constant or filter were dropped, per `testing.md`'s bar). The one real gap is the pinch pair-identity issue above, which has zero coverage in either direction.
+
+## Result
+
+1. **Pinch/twist state doesn't defend a stray third finger** — `dist/web/cube/gestures.ts`, `pinchDistance()`/`pinchAngle()`/`centroid()` (lines ~427-445) vs. `onDown`'s `pointers.size &gt; 2` passthrough and `onUp`'s `if (this.pointers.size &gt;= 2) return;`. A third contact landing mid-pinch immediately skews `centroid()` (which averages *all* pointers) against a two-finger baseline, jump-orbiting the cube for one frame; if one of the original two fingers then lifts, `pinchDistance`/`pinchAngle` silently start reading a different pair without re-baselining `startSpan`/`lastTwist`/`lastCentroid`, jumping zoom and roll. No test exercises a third pointerId anywhere in the pinch/twist suites. Fix: pin the two tracked pointerIds in `PinchDrag` at creation, use them explicitly (not "first two of the map" / "all of the map"), and re-baseline whenever that pair's membership changes rather than only when the count drops below 2.
+
+2. **The deferred-raycast comment misattributes the cause** — `dist/web/cube/gestures.ts` lines 236-248. It says `onCommit` "reaches the renderer through React"; `useSolve.ts`'s `dispatch` actually calls `renderer.setState()` synchronously. The real reason the raycast must be deferred is that `renderer.setState()` only updates cubie data — the mesh transforms `pickSticker` raycasts against are written once per animation frame inside `loop()`/`applyTransforms()`, so a same-tick raycast still hits the pre-commit frame. The fix is still correct and your real-device verification is the right test for it; I'd just correct the comment so a future change to `dispatch` doesn't get "reasoned" into deleting this deferral for the wrong reason.
+
+3. Everything else held up under a close trace: the five-way `Drag` union, `landTurn`/`onAnimationStopped` finishers, and `springGeneration` guard cover every transition I could construct (pinch promotion from any state, interrupted cancel, second-touch-lands-a-spring) without stranding a rotated layer, double-firing a commit, or leaking a pointer or capture. The axis switch re-derives from the same two candidate normals every time, so it can't grab a layer that isn't under the finger. `grabGeometry()`'s ring/seam offsets check out against the actual cubie dimensions, and disposal in `rebuildGrab` is correct. Both icon scripts are idempotent and fail loudly (not silently) without Pillow.
+
+Also consider: add the two missing pinch-with-a-third-finger regression tests once the fix lands — they'd have caught this cleanly given how the existing harness already tracks per-pointerId dispatch.
